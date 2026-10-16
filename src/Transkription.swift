@@ -152,7 +152,7 @@ final class Transkription {
                 if let a = aktuell { aus.append(a) }
                 aktuell = w
             }
-            if let a = aktuell, let z = a.text.trimmingCharacters(in: .whitespaces).last, ".?!".contains(z) {
+            if let a = aktuell, let z = a.text.trimmingCharacters(in: .whitespaces).last, ".?!。？！".contains(z) {
                 aus.append(a); aktuell = nil
             }
         }
@@ -257,7 +257,7 @@ final class Transkription {
             let id = anteile.max { $0.value < $1.value }.map { "s\(nummer[$0.key] ?? 1)" } ?? (sprecher.isEmpty ? standard : vorher)
             vorher = id
             if var letzter = aus.last, letzter.sprecher == id, satz.start - letzter.ende <= 2.0 {
-                letzter.text += " " + satz.text
+                letzter.text = Textarbeit.verbinden(letzter.text, satz.text)
                 letzter.ende = satz.ende
                 aus[aus.count - 1] = letzter
             } else {
@@ -270,7 +270,12 @@ final class Transkription {
     /// Ohne Kopfhörer hört das Mikrofon die anderen mit. Solche Abschnitte fliegen raus.
     private func echoEntfernen(_ eigene: [Segment], _ andere: [Segment]) -> [Segment] {
         func woerter(_ s: String) -> Set<String> {
-            Set(s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count > 2 })
+            // Japanisch hat keine Leerzeichen, dort vergleichen je zwei aufeinanderfolgende Zeichen.
+            if Textarbeit.istJapanisch(s) {
+                let z = Array(s.filter { $0.isLetter || $0.isNumber })
+                return z.count < 2 ? [] : Set((0..<z.count - 1).map { String(z[$0...$0 + 1]) })
+            }
+            return Set(s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count > 2 })
         }
         return eigene.filter { ich in
             let w = woerter(ich.text)
@@ -316,7 +321,7 @@ final class Transkription {
         for x in s {
             // Gleicher Sprecher, kurze Pause, Absatz noch nicht zu lang: anhängen.
             if var letzter = aus.last, letzter.sprecher == x.sprecher, x.start - letzter.ende < 4, x.ende - letzter.start < 75 {
-                letzter.text += " " + x.text
+                letzter.text = Textarbeit.verbinden(letzter.text, x.text)
                 letzter.ende = x.ende
                 aus[aus.count - 1] = letzter
             } else {

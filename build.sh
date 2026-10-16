@@ -1,5 +1,6 @@
 #!/bin/bash
-# Baut Koe.app nach build/. Kein Xcode-Projekt, nur swiftc (wie Komorebi).
+# Baut Koe.app in build/ und installiert sie nach /Applications (Finder: Programme).
+# Kein Xcode-Projekt, nur swiftc (wie Komorebi).
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 AIOS_DIR="$(cd "$APP_DIR/../.." && pwd)"
@@ -46,7 +47,6 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
-<key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -63,4 +63,13 @@ else
   codesign --force --sign - "$BUNDLE"
   echo "Hinweis: ohne Entwickler-Zertifikat signiert, Rechte müssen nach jedem Neubau neu erteilt werden."
 fi
-printf 'Fertig: %s\n' "$BUNDLE"
+# Nach /Applications installieren. Nur eine Kopie behalten, sonst findet Spotlight zwei Koe.
+ZIEL="/Applications/Koe.app"
+if pgrep -f "$ZIEL/Contents/MacOS/Koe" >/dev/null || pgrep -f "$BUNDLE/Contents/MacOS/Koe" >/dev/null; then
+  osascript -e 'tell application id "de.kenzoweiss.koe" to quit' >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "Koe.app/Contents/MacOS/Koe" >/dev/null || break; sleep 0.5; done
+fi
+rm -rf "$ZIEL"
+ditto "$BUNDLE" "$ZIEL"
+rm -rf "$BUNDLE"
+printf 'Fertig: %s\n' "$ZIEL"

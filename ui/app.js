@@ -372,7 +372,7 @@ function viewEinstellungen() {
       </div>
       <div class="reihe">
         <div class="reihe-text"><b>Sprache</b></div>
-        ${segmente('sprache', [['de', 'Deutsch'], ['en', 'Englisch'], ['auto', 'Automatisch']], e.sprache)}
+        ${segmente('sprache', [['de', 'Deutsch'], ['en', 'Englisch'], ['ja', 'Japanisch'], ['auto', 'Automatisch']], e.sprache)}
       </div>
       ${schalterReihe('aufraeumen', 'Text aufräumen', 'Füllwörter raus, Satzzeichen rein')}
       ${schalterReihe('einfuegen', 'Automatisch einfügen', 'Der Text landet dort, wo dein Cursor steht')}

@@ -28,7 +28,9 @@ final class Koe: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         Ports.laden()
-        NSApp.setActivationPolicy(.accessory)
+        // Koe erscheint im Dock mit Punkt, solange es läuft, und im App-Umschalter (⌘-Tab).
+        NSApp.setActivationPolicy(.regular)
+        hauptmenueEinrichten()
         menueEinrichten()
 
         dienste.geaendert = { [weak self] in self?.zustandSenden() }
@@ -84,6 +86,39 @@ final class Koe: NSObject, NSApplicationDelegate {
         let menue = NSMenu()
         menue.delegate = self
         statusItem.menu = menue
+    }
+
+    /// Die Menüzeile oben, wenn Koe vorne ist. Ohne sie gehen ⌘Q, ⌘W, ⌘C und ⌘V im Fenster nicht.
+    private func hauptmenueEinrichten() {
+        let haupt = NSMenu()
+        func untermenue(_ titel: String, _ eintraege: [(String, Selector?, String)]) -> NSMenu {
+            let m = NSMenu(title: titel)
+            for (t, aktion, taste) in eintraege {
+                if t == "-" { m.addItem(.separator()); continue }
+                m.addItem(NSMenuItem(title: t, action: aktion, keyEquivalent: taste))
+            }
+            let kopf = NSMenuItem()
+            kopf.submenu = m
+            haupt.addItem(kopf)
+            return m
+        }
+        let app = untermenue("Koe", [
+            ("Über Koe", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""), ("-", nil, ""),
+            ("Koe ausblenden", #selector(NSApplication.hide(_:)), "h"), ("-", nil, ""),
+            ("Koe beenden", #selector(NSApplication.terminate(_:)), "q"),
+        ])
+        app.items.forEach { if $0.action != nil { $0.target = NSApp } }
+        _ = untermenue("Bearbeiten", [
+            ("Widerrufen", Selector(("undo:")), "z"), ("Wiederholen", Selector(("redo:")), "Z"), ("-", nil, ""),
+            ("Ausschneiden", #selector(NSText.cut(_:)), "x"), ("Kopieren", #selector(NSText.copy(_:)), "c"),
+            ("Einfügen", #selector(NSText.paste(_:)), "v"), ("Alles auswählen", #selector(NSText.selectAll(_:)), "a"),
+        ])
+        let fensterMenue = untermenue("Fenster", [
+            ("Schließen", #selector(NSWindow.performClose(_:)), "w"),
+            ("Im Dock ablegen", #selector(NSWindow.performMiniaturize(_:)), "m"),
+        ])
+        NSApp.mainMenu = haupt
+        NSApp.windowsMenu = fensterMenue
     }
 
     private func statusItemBild() {
