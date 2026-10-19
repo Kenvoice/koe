@@ -25,6 +25,8 @@ final class Koe: NSObject, NSApplicationDelegate {
     private var rechteTimer: Timer?
     private var bedienungshilfenVorher = false
     private var zustandGeplant = false
+    private var gemmaWeckt = false
+    private var gemmaTimer: Timer?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         Ports.laden()
@@ -300,6 +302,8 @@ final class Koe: NSObject, NSApplicationDelegate {
             }
             aufnahmeArt = "diktat"
             aufnahmeSeit = jetztMs()
+            gemmaWecken()
+            gemmaTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.gemmaWecken() }
             diktatApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             // Rückmeldung erst, wenn klar ist, dass es kein kurzer Tipper oder eine Tastenkombination war.
             let arbeit = DispatchWorkItem { [weak self] in
@@ -315,12 +319,16 @@ final class Koe: NSObject, NSApplicationDelegate {
             ton("Tink")
         case .verwerfen:
             feedbackArbeit?.cancel()
+            gemmaTimer?.invalidate()
+            gemmaTimer = nil
             guard aufnahmeArt == "diktat" else { return }
             mikrofon.stoppen()
             aufnahmeArt = nil
             pille.zeigen(.aus)
         case .stopp:
             feedbackArbeit?.cancel()
+            gemmaTimer?.invalidate()
+            gemmaTimer = nil
             guard aufnahmeArt == "diktat" else { return }
             let hoechster = mikrofon.hoechsterPegel
             let samples = mikrofon.stoppen()
@@ -332,13 +340,28 @@ final class Koe: NSObject, NSApplicationDelegate {
                 return
             }
             pille.zeigen(.verarbeite)
+            gemmaWecken()   // läuft parallel zur Spracherkennung und bremst sie nicht
             let app = diktatApp
             Task { await self.diktatVerarbeiten(samples, dauer: dauer, app: app) }
         }
     }
 
+    /// Hält Gemma wach, solange gesprochen wird: beim Drücken der Taste, alle 1,5 s während der Aufnahme und
+    /// beim Loslassen. Schon nach rund 10 s Pause fährt der Mac die Grafikeinheit herunter, dann braucht das
+    /// Aufräumen 2,5 s statt 0,5 s. Ein Stupser ist ein Token Antwort und kostet wach rund 0,1 s.
+    private func gemmaWecken() {
+        let e = speicher.einstellungen
+        guard e.aufraeumen, dienste.llm.status == "bereit", !gemmaWeckt else { return }
+        gemmaWeckt = true
+        Task {
+            await Textarbeit.aufwecken(woerter: e.woerter, japanisch: e.sprache == "ja")
+            await MainActor.run { self.gemmaWeckt = false }
+        }
+    }
+
     private func diktatVerarbeiten(_ samples: [Float], dauer: Double, app: String) async {
         let e = speicher.einstellungen
+        let t0 = Date()
         var felder = ["response_format": "json", "temperature": "0"]
         if !e.woerter.isEmpty { felder["prompt"] = e.woerter.joined(separator: ", ") + "." }
         let roh: String
@@ -351,23 +374,38 @@ final class Koe: NSObject, NSApplicationDelegate {
             await MainActor.run { pille.zeigen(.hinweis("Spracherkennung fehlgeschlagen")) }
             return
         }
+        let erkennung = Date().timeIntervalSince(t0)
         if Textarbeit.istHalluzination(roh) {
             await MainActor.run { pille.zeigen(.hinweis("Nichts verstanden")) }
             return
         }
         var text = roh
-        if e.aufraeumen, dienste.llm.status == "bereit", Textarbeit.anzahlWoerter(roh) >= 3,
-           let sauber = await Textarbeit.aufraeumen(roh, woerter: e.woerter) {
-            text = Textarbeit.ersetzen(sauber, e.ersetzungen)
+        // Für das Protokoll: wie lange das Aufräumen gedauert hat und wie es ausging. Diktattexte kommen nicht ins Log.
+        var aufraeumInfo = "Aufräumen aus"
+        if e.aufraeumen, dienste.llm.status == "bereit", Textarbeit.anzahlWoerter(roh) >= 3 {
+            let t1 = Date()
+            let sauber = await Textarbeit.aufraeumen(roh, woerter: e.woerter)
+            let dauerAufraeumen = String(format: "%.1f", Date().timeIntervalSince(t1))
+            if let sauber {
+                text = Textarbeit.ersetzen(sauber, e.ersetzungen)
+                aufraeumInfo = "Aufräumen \(dauerAufraeumen) s" + (text == roh ? " (nichts geändert)" : "")
+            } else {
+                aufraeumInfo = "Aufräumen \(dauerAufraeumen) s ohne Ergebnis, Rohtext eingefügt"
+            }
+        } else if e.aufraeumen {
+            aufraeumInfo = dienste.llm.status == "bereit" ? "zu kurz zum Aufräumen" : "Gemma nicht bereit"
         }
         let ergebnis = text
+        let info = aufraeumInfo
         await MainActor.run {
             let eingefuegt = e.einfuegen && Einfuegen.text(ergebnis)
             if !eingefuegt { Einfuegen.kopieren(ergebnis) }
             pille.zeigen(eingefuegt ? .fertig : .hinweis(AXIsProcessTrusted() ? "In der Zwischenablage" : "Bedienungshilfen fehlen, Text liegt in der Zwischenablage"))
             ton("Glass")
             speicher.diktatHinzufuegen(Diktat(id: UUID().uuidString, zeit: jetztMs(), dauer: dauer, roh: roh, text: ergebnis, app: app))
-            protokoll("Diktat: \(String(format: "%.1f", dauer)) s, \(Textarbeit.anzahlWoerter(ergebnis)) Wörter, \(app)")
+            protokoll("Diktat: \(String(format: "%.1f", dauer)) s, \(Textarbeit.anzahlWoerter(ergebnis)) Wörter, \(app) · "
+                      + "Erkennung \(String(format: "%.1f", erkennung)) s · \(info) · "
+                      + "Wartezeit \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
             zustandSenden()
         }
     }

@@ -4,8 +4,12 @@ import Foundation
 
 enum Textarbeit {
     /// Whisper liefert Zeilenumbrüche mitten im Satz und führende Leerzeichen.
+    /// Ein neues Wort beginnt bei Whisper mit einem Leerzeichen. Folgt auf den Umbruch keins, wurde ein Wort
+    /// zerrissen („Bet\nräge“), dann fällt der Umbruch ersatzlos weg. Nach einem Satzzeichen kommt ein Leerzeichen hin.
     static func glaetten(_ text: String) -> String {
-        text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        text.replacingOccurrences(of: "([.,!?;:])\\n(?=\\S)", with: "$1 ", options: .regularExpression)
+            .replacingOccurrences(of: "\\n(?=\\S)", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -109,24 +113,46 @@ enum Textarbeit {
          "Hallo zusammen,\nich bin ab morgen im Urlaub."),
     ]
 
-    /// Fragt das lokale Modell. Gibt nil zurück, wenn es nicht antwortet oder das Ergebnis unplausibel ist.
-    static func aufraeumen(_ roh: String, woerter: [String], timeout: TimeInterval = 8) async -> String? {
-        // Die Sprache richtet sich nach dem Text, nicht nach der Einstellung. So klappt es auch bei „Automatisch“.
-        let japanisch = istJapanisch(roh)
-        var nachrichten: [[String: String]] = [["role": "system", "content": anweisung(woerter, japanisch: japanisch)]]
+    /// Anleitung, Beispiele und Diktat als Chat. Der Anfang ist bei jedem Diktat gleich, das Modell hält ihn vorberechnet.
+    static func nachrichten(_ roh: String, woerter: [String], japanisch: Bool) -> [[String: String]] {
+        var n: [[String: String]] = [["role": "system", "content": anweisung(woerter, japanisch: japanisch)]]
         for (a, b) in japanisch ? beispieleJapanisch : beispiele {
-            nachrichten.append(["role": "user", "content": "<diktat>\(a)</diktat>"])
-            nachrichten.append(["role": "assistant", "content": b])
+            n.append(["role": "user", "content": "<diktat>\(a)</diktat>"])
+            n.append(["role": "assistant", "content": b])
         }
-        nachrichten.append(["role": "user", "content": "<diktat>\(roh)</diktat>"])
+        n.append(["role": "user", "content": "<diktat>\(roh)</diktat>"])
+        return n
+    }
+
+    /// Gemma schreibt rund 35 Tokens pro Sekunde. Ein Diktat mit 300 Wörtern braucht so 10 bis 12 s.
+    /// Das Limit wächst mit der Länge, damit lange Diktate nicht nach 8 s abbrechen und doch nur den Rohtext bekommen.
+    static func zeitlimit(_ roh: String) -> TimeInterval {
+        max(8, 6 + Double(anzahlWoerter(roh)) * 0.06)
+    }
+
+    /// Weckt Gemma, während noch gesprochen wird. Nach einer Pause lagert macOS das Modell aus, dann dauert
+    /// die erste Anfrage 8 s statt 1 s. Gleicher Anfang wie beim echten Aufräumen, nur ein Token Antwort.
+    static func aufwecken(woerter: [String], japanisch: Bool) async {
+        let koerper: [String: Any] = [
+            "model": Dienste.llmModell, "temperature": 0, "max_tokens": 1,
+            "chat_template_kwargs": ["enable_thinking": false],
+            "messages": nachrichten("test", woerter: woerter, japanisch: japanisch),
+        ]
+        _ = try? await HTTP.json("http://127.0.0.1:\(Ports.llm)/v1/chat/completions", koerper, timeout: 30)
+    }
+
+    /// Fragt das lokale Modell. Gibt nil zurück, wenn es nicht antwortet oder das Ergebnis unplausibel ist.
+    static func aufraeumen(_ roh: String, woerter: [String], timeout: TimeInterval? = nil) async -> String? {
+        // Die Sprache richtet sich nach dem Text, nicht nach der Einstellung. So klappt es auch bei „Automatisch“.
         let koerper: [String: Any] = [
             "model": Dienste.llmModell,
             "temperature": 0,
             "max_tokens": max(64, anzahlWoerter(roh) * 4),
             "chat_template_kwargs": ["enable_thinking": false],
-            "messages": nachrichten,
+            "messages": nachrichten(roh, woerter: woerter, japanisch: istJapanisch(roh)),
         ]
-        guard let antwort = try? await HTTP.json("http://127.0.0.1:\(Ports.llm)/v1/chat/completions", koerper, timeout: timeout),
+        guard let antwort = try? await HTTP.json("http://127.0.0.1:\(Ports.llm)/v1/chat/completions", koerper,
+                                                 timeout: timeout ?? zeitlimit(roh)),
               let wahl = (antwort["choices"] as? [[String: Any]])?.first,
               let inhalt = (wahl["message"] as? [String: Any])?["content"] as? String else { return nil }
         let text = inhalt.replacingOccurrences(of: "</?diktat>", with: "", options: .regularExpression)
