@@ -354,7 +354,7 @@ final class Koe: NSObject, NSApplicationDelegate {
         guard e.aufraeumen, dienste.llm.status == "bereit", !gemmaWeckt else { return }
         gemmaWeckt = true
         Task {
-            await Textarbeit.aufwecken(woerter: e.woerter, japanisch: e.sprache == "ja")
+            await Textarbeit.aufwecken(woerter: e.woerter, sprache: ["ja", "zh"].contains(e.sprache) ? e.sprache : "de")
             await MainActor.run { self.gemmaWeckt = false }
         }
     }
@@ -363,7 +363,7 @@ final class Koe: NSObject, NSApplicationDelegate {
         let e = speicher.einstellungen
         let t0 = Date()
         var felder = ["response_format": "json", "temperature": "0"]
-        if !e.woerter.isEmpty { felder["prompt"] = e.woerter.joined(separator: ", ") + "." }
+        if let prompt = Textarbeit.whisperPrompt(e.woerter, sprache: e.sprache) { felder["prompt"] = prompt }
         let roh: String
         do {
             let antwort = try await HTTP.multipart("http://127.0.0.1:\(Ports.whisper)/inference", felder: felder,

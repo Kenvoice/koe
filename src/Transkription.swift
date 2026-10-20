@@ -193,7 +193,7 @@ final class Transkription {
                     "-ml", "1", "-sow", "-oj", "-of", basis, "-pp", "-f", audio.path]
         if ohneKontext { args += ["-mc", "0"] }
         if FileManager.default.fileExists(atPath: Pfade.vad.path) { args += ["--vad", "-vm", Pfade.vad.path] }
-        if !e.woerter.isEmpty { args += ["--prompt", e.woerter.joined(separator: ", ") + "."] }
+        if let prompt = Textarbeit.whisperPrompt(e.woerter, sprache: e.sprache) { args += ["--prompt", prompt] }
         try await ausfuehren(Pfade.whisperCli, args) { zeile in
             // whisper-cli meldet "progress = 42%"
             if let r = zeile.range(of: #"progress\s*=\s*(\d+)%"#, options: .regularExpression) {
@@ -270,8 +270,8 @@ final class Transkription {
     /// Ohne Kopfhörer hört das Mikrofon die anderen mit. Solche Abschnitte fliegen raus.
     private func echoEntfernen(_ eigene: [Segment], _ andere: [Segment]) -> [Segment] {
         func woerter(_ s: String) -> Set<String> {
-            // Japanisch hat keine Leerzeichen, dort vergleichen je zwei aufeinanderfolgende Zeichen.
-            if Textarbeit.istJapanisch(s) {
+            // Chinesisch und Japanisch haben keine Leerzeichen, dort vergleichen je zwei aufeinanderfolgende Zeichen.
+            if Textarbeit.istCJK(s) {
                 let z = Array(s.filter { $0.isLetter || $0.isNumber })
                 return z.count < 2 ? [] : Set((0..<z.count - 1).map { String(z[$0...$0 + 1]) })
             }
