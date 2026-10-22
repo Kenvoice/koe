@@ -371,7 +371,7 @@ function viewEinstellungen() {
         ${segmente('taste', [['rechte-option', 'Rechte ⌥'], ['fn', 'fn'], ['rechte-befehl', 'Rechte ⌘']], e.taste)}
       </div>
       <div class="reihe">
-        <div class="reihe-text"><b>Sprache</b></div>
+        <div class="reihe-text"><b>Sprache</b><span>Automatisch wählt nur unter diesen vier Sprachen</span></div>
         ${segmente('sprache', [['de', 'Deutsch'], ['en', 'Englisch'], ['ja', 'Japanisch'], ['zh', 'Chinesisch'], ['auto', 'Automatisch']], e.sprache)}
       </div>
       ${schalterReihe('aufraeumen', 'Text aufräumen', 'Füllwörter raus, Satzzeichen rein')}

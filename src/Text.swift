@@ -87,6 +87,19 @@ enum Textarbeit {
 
     // MARK: Aufräumen
 
+    /// Unter diesen Sprachen wählt „Automatisch“. Es sind dieselben wie in den Einstellungen (ui/app.js).
+    /// Whisper selbst rät unter rund 100 Sprachen und hält Chinesisch mit Akzent oft für Englisch oder Koreanisch.
+    static let autoSprachen = ["de", "en", "ja", "zh"]
+
+    /// Die wahrscheinlichste der erlaubten Sprachen aus einer verbose_json-Antwort von whisper-server.
+    /// nil, wenn die Antwort keine Liste hat oder keine der Sprachen darin vorkommt.
+    static func besteSprache(_ antwort: [String: Any]) -> (sprache: String, p: Double)? {
+        guard let liste = antwort["language_probabilities"] as? [String: Any] else { return nil }
+        return autoSprachen
+            .compactMap { s in (liste[s] as? NSNumber).map { (sprache: s, p: $0.doubleValue) } }
+            .max { $0.p < $1.p }
+    }
+
     /// Whisper schreibt Chinesisch oft in Langzeichen. Ein Satz in Kurzzeichen vorweg lenkt es auf Kurzzeichen.
     static func whisperPrompt(_ woerter: [String], sprache: String) -> String? {
         var teile: [String] = []

@@ -27,6 +27,8 @@ final class Koe: NSObject, NSApplicationDelegate {
     private var zustandGeplant = false
     private var gemmaWeckt = false
     private var gemmaTimer: Timer?
+    /// Bei „Automatisch“ probiert Koe zuerst die Sprache des letzten Diktats. Meist bleibt sie gleich, dann reicht ein Durchgang.
+    private var letzteSprache = "de"
 
     func applicationDidFinishLaunching(_ n: Notification) {
         Ports.laden()
@@ -362,12 +364,39 @@ final class Koe: NSObject, NSApplicationDelegate {
     private func diktatVerarbeiten(_ samples: [Float], dauer: Double, app: String) async {
         let e = speicher.einstellungen
         let t0 = Date()
-        var felder = ["response_format": "json", "temperature": "0"]
-        if let prompt = Textarbeit.whisperPrompt(e.woerter, sprache: e.sprache) { felder["prompt"] = prompt }
+        let wav = wavDaten(samples)
+        /// Eine Anfrage an whisper-server. Mit `sprache` ist die Sprache fest, sonst gilt die beim Start gewählte.
+        /// `liste` holt zusätzlich die Wahrscheinlichkeit jeder Sprache (verbose_json).
+        func anfrage(_ sprache: String?, liste: Bool) async throws -> [String: Any] {
+            var felder = ["response_format": liste ? "verbose_json" : "json", "temperature": "0"]
+            if let sprache { felder["language"] = sprache }
+            if let prompt = Textarbeit.whisperPrompt(e.woerter, sprache: sprache ?? e.sprache) { felder["prompt"] = prompt }
+            return try await HTTP.multipart("http://127.0.0.1:\(Ports.whisper)/inference", felder: felder,
+                                            datei: wav, dateiname: "diktat.wav", timeout: 60)
+        }
         let roh: String
+        var sprachInfo = ""
         do {
-            let antwort = try await HTTP.multipart("http://127.0.0.1:\(Ports.whisper)/inference", felder: felder,
-                                                   datei: wavDaten(samples), dateiname: "diktat.wav", timeout: 60)
+            var antwort: [String: Any]
+            if e.sprache == "auto" {
+                // Erst in der Sprache des letzten Diktats transkribieren und dabei Whispers Einschätzung mitnehmen.
+                // Ist eine andere der erlaubten Sprachen wahrscheinlicher, ein zweiter Durchgang fest in dieser Sprache.
+                // Fest in der falschen Sprache übersetzt Whisper nämlich, statt mitzuschreiben.
+                let versuch = await MainActor.run { letzteSprache }
+                antwort = try await anfrage(versuch, liste: true)
+                if let beste = Textarbeit.besteSprache(antwort) {
+                    sprachInfo = "Sprache \(beste.sprache) \(String(format: "%.2f", beste.p))"
+                    if beste.sprache != versuch {
+                        antwort = try await anfrage(beste.sprache, liste: false)
+                        sprachInfo += ", zweiter Durchgang statt \(versuch)"
+                    }
+                    await MainActor.run { letzteSprache = beste.sprache }
+                } else {
+                    sprachInfo = "Sprache \(versuch), keine Einschätzung"
+                }
+            } else {
+                antwort = try await anfrage(nil, liste: false)
+            }
             roh = Textarbeit.ersetzen(Textarbeit.glaetten(antwort["text"] as? String ?? ""), e.ersetzungen)
         } catch {
             protokoll("Diktat: Spracherkennung fehlgeschlagen: \(error.localizedDescription)")
@@ -397,6 +426,7 @@ final class Koe: NSObject, NSApplicationDelegate {
         }
         let ergebnis = text
         let info = aufraeumInfo
+        let spracheText = sprachInfo
         await MainActor.run {
             let eingefuegt = e.einfuegen && Einfuegen.text(ergebnis)
             if !eingefuegt { Einfuegen.kopieren(ergebnis) }
@@ -404,7 +434,7 @@ final class Koe: NSObject, NSApplicationDelegate {
             ton("Glass")
             speicher.diktatHinzufuegen(Diktat(id: UUID().uuidString, zeit: jetztMs(), dauer: dauer, roh: roh, text: ergebnis, app: app))
             protokoll("Diktat: \(String(format: "%.1f", dauer)) s, \(Textarbeit.anzahlWoerter(ergebnis)) Wörter, \(app) · "
-                      + "Erkennung \(String(format: "%.1f", erkennung)) s · \(info) · "
+                      + "Erkennung \(String(format: "%.1f", erkennung)) s" + (spracheText.isEmpty ? "" : " (\(spracheText))") + " · \(info) · "
                       + "Wartezeit \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
             zustandSenden()
         }

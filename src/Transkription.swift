@@ -163,10 +163,41 @@ final class Transkription {
     /// Erst mit Kontext zwischen den 30-s-Fenstern (bessere Satzzeichen). Läuft Whisper dabei in eine Schleife,
     /// wird ohne Kontext wiederholt.
     private func whisper(_ id: String, _ audio: URL, _ e: Einstellungen, von: Double, bis: Double, text: String) async throws -> [Teil] {
+        var e = e
+        if e.sprache == "auto", let sprache = await spracheErkennen(id, audio, von: von, text: text) { e.sprache = sprache }
         let teile = try await whisperLauf(id, audio, e, von: von, bis: bis, text: text, ohneKontext: false)
         guard istSchleife(saetze(teile)) else { return teile }
         protokoll("Whisper-Schleife erkannt, neuer Durchgang ohne Kontext")
         return try await whisperLauf(id, audio, e, von: von, bis: bis, text: text + " (zweiter Durchgang)", ohneKontext: true)
+    }
+
+    /// Bei „Automatisch“: die Sprache vorab bestimmen, nur unter den Sprachen von Koe (Textarbeit.autoSprachen).
+    /// whisper-cli selbst würde unter rund 100 Sprachen raten. Gefragt wird der Diktat-Dienst mit den ersten
+    /// zwei Minuten der Aufnahme. Läuft der Dienst nicht, entscheidet whisper-cli wie bisher selbst.
+    private func spracheErkennen(_ id: String, _ audio: URL, von: Double, text: String) async -> String? {
+        let adresse = "http://127.0.0.1:\(Ports.whisper)/inference"
+        guard await HTTP.erreichbar("http://127.0.0.1:\(Ports.whisper)/") else {
+            protokoll("Sprache vorab nicht bestimmt: Diktat-Dienst läuft nicht, whisper-cli wählt selbst")
+            return nil
+        }
+        schritt(id, "\(text): Sprache wird bestimmt", von)
+        let probe = URL(fileURLWithPath: audio.deletingPathExtension().path + ".probe.wav")
+        defer { try? FileManager.default.removeItem(at: probe) }
+        do {
+            try await ausfuehren(Pfade.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", audio.path, "-t", "120",
+                                                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", probe.path])
+            let antwort = try await HTTP.multipart(adresse, felder: ["response_format": "verbose_json", "detect_language": "true", "temperature": "0"],
+                                                   datei: try Data(contentsOf: probe), dateiname: "probe.wav", timeout: 60)
+            guard let beste = Textarbeit.besteSprache(antwort) else {
+                protokoll("Sprache vorab nicht bestimmt: keine Einschätzung, whisper-cli wählt selbst")
+                return nil
+            }
+            protokoll("Sprache vorab bestimmt: \(beste.sprache) \(String(format: "%.2f", beste.p)) (\(audio.lastPathComponent))")
+            return beste.sprache
+        } catch {
+            protokoll("Sprache vorab nicht bestimmt: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func istSchleife(_ teile: [Teil]) -> Bool {
