@@ -202,6 +202,30 @@ enum Textarbeit {
         _ = try? await HTTP.json("http://127.0.0.1:\(Ports.llm)/v1/chat/completions", koerper, timeout: 30)
     }
 
+    /// Ein kurzes gesprochenes „Hallo“ (Mac-Stimme), mit dem Koe die Spracherkennung weckt. Stille ginge nicht:
+    /// Die schneidet der Stille-Erkenner weg, dann rechnet Whisper gar nicht und lädt auch nichts nach.
+    static func weckAudio() -> Data? {
+        let url = Pfade.basis.appendingPathComponent("weck.wav")
+        if let d = try? Data(contentsOf: url), d.count > 1000 { return d }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        p.arguments = ["-o", url.path, "--data-format=LEI16@16000", "Hallo, kurzer Test."]
+        do { try p.run() } catch { return nil }
+        p.waitUntilExit()
+        return try? Data(contentsOf: url)
+    }
+
+    /// Weckt die Spracherkennung, während noch gesprochen wird. Nach einer Pause lagert macOS das Modell aus,
+    /// dann braucht die erste Erkennung 8–12 s statt 2 s. Gibt zurück, wie lange das Wecken gedauert hat.
+    static func whisperAufwecken() async -> TimeInterval? {
+        guard let wav = weckAudio() else { return nil }
+        let t0 = Date()
+        guard (try? await HTTP.multipart("http://127.0.0.1:\(Ports.whisper)/inference",
+                                         felder: ["response_format": "json", "temperature": "0", "language": "de"],
+                                         datei: wav, dateiname: "weck.wav", timeout: 30)) != nil else { return nil }
+        return Date().timeIntervalSince(t0)
+    }
+
     /// Fragt das lokale Modell. Gibt nil zurück, wenn es nicht antwortet oder das Ergebnis unplausibel ist.
     static func aufraeumen(_ roh: String, woerter: [String], timeout: TimeInterval? = nil) async -> String? {
         // Die Sprache richtet sich nach dem Text, nicht nach der Einstellung. So klappt es auch bei „Automatisch“.

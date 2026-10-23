@@ -25,6 +25,7 @@ final class Dienste {
     func starten(_ e: Einstellungen) {
         beendet = false
         sprecherPruefen()
+        DispatchQueue.global(qos: .utility).async { _ = Textarbeit.weckAudio() }   // einmal anlegen, liegt dann bereit
         Task { await self.whisperStarten(sprache: e.sprache) }
         if e.aufraeumen {
             Task { await self.llmStarten() }

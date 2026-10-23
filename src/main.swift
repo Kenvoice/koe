@@ -27,6 +27,9 @@ final class Koe: NSObject, NSApplicationDelegate {
     private var zustandGeplant = false
     private var gemmaWeckt = false
     private var gemmaTimer: Timer?
+    private var whisperWeckt = false
+    /// Wie lange das letzte Wecken der Spracherkennung gedauert hat (fürs Protokoll). Über 2 s heißt: sie war ausgelagert.
+    private var whisperWeckDauer: TimeInterval?
     /// Bei „Automatisch“ probiert Koe zuerst die Sprache des letzten Diktats. Meist bleibt sie gleich, dann reicht ein Durchgang.
     private var letzteSprache = "de"
 
@@ -304,6 +307,7 @@ final class Koe: NSObject, NSApplicationDelegate {
             }
             aufnahmeArt = "diktat"
             aufnahmeSeit = jetztMs()
+            whisperWecken()
             gemmaWecken()
             gemmaTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.gemmaWecken() }
             diktatApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
@@ -361,6 +365,21 @@ final class Koe: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Weckt die Spracherkennung beim Drücken der Taste. Das Nachladen nach einer Pause läuft dann, während
+    /// gesprochen wird, und nicht erst nach dem Loslassen. Wach kostet das rund 0,8 s, die man nicht merkt.
+    private func whisperWecken() {
+        guard dienste.whisper.status == "bereit", !whisperWeckt else { return }
+        whisperWeckt = true
+        whisperWeckDauer = nil
+        Task {
+            let dauer = await Textarbeit.whisperAufwecken()
+            await MainActor.run {
+                self.whisperWeckt = false
+                self.whisperWeckDauer = dauer
+            }
+        }
+    }
+
     private func diktatVerarbeiten(_ samples: [Float], dauer: Double, app: String) async {
         let e = speicher.einstellungen
         let t0 = Date()
@@ -412,15 +431,25 @@ final class Koe: NSObject, NSApplicationDelegate {
         // Für das Protokoll: wie lange das Aufräumen gedauert hat und wie es ausging. Diktattexte kommen nicht ins Log.
         var aufraeumInfo = "Aufräumen aus"
         if e.aufraeumen, dienste.llm.status == "bereit", Textarbeit.anzahlWoerter(roh) >= 3 {
+            // Ist Gemma noch am Aufwachen, erst darauf warten (höchstens 20 s). Sonst stellt sich das Aufräumen
+            // hinten an, und das Zeitlimit läuft ab, bevor Gemma überhaupt dran ist. Dann käme nur der Rohtext.
+            let tWarten = Date()
+            while await MainActor.run(body: { self.gemmaWeckt }), Date().timeIntervalSince(tWarten) < 20 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            let gewartet = Date().timeIntervalSince(tWarten)
             let t1 = Date()
             let sauber = await Textarbeit.aufraeumen(roh, woerter: e.woerter)
-            let dauerAufraeumen = String(format: "%.1f", Date().timeIntervalSince(t1))
+            var hinweise: [String] = []
             if let sauber {
                 text = Textarbeit.ersetzen(sauber, e.ersetzungen)
-                aufraeumInfo = "Aufräumen \(dauerAufraeumen) s" + (text == roh ? " (nichts geändert)" : "")
+                if text == roh { hinweise.append("nichts geändert") }
             } else {
-                aufraeumInfo = "Aufräumen \(dauerAufraeumen) s ohne Ergebnis, Rohtext eingefügt"
+                hinweise.append("ohne Ergebnis, Rohtext eingefügt")
             }
+            if gewartet >= 0.3 { hinweise.append("vorher \(String(format: "%.1f", gewartet)) s aufs Aufwachen gewartet") }
+            aufraeumInfo = "Aufräumen \(String(format: "%.1f", Date().timeIntervalSince(t1))) s"
+                + (hinweise.isEmpty ? "" : " (\(hinweise.joined(separator: ", ")))")
         } else if e.aufraeumen {
             aufraeumInfo = dienste.llm.status == "bereit" ? "zu kurz zum Aufräumen" : "Gemma nicht bereit"
         }
@@ -428,13 +457,14 @@ final class Koe: NSObject, NSApplicationDelegate {
         let info = aufraeumInfo
         let spracheText = sprachInfo
         await MainActor.run {
+            let weckInfo = whisperWeckDauer.map { "Wecken \(String(format: "%.1f", $0)) s · " } ?? ""
             let eingefuegt = e.einfuegen && Einfuegen.text(ergebnis)
             if !eingefuegt { Einfuegen.kopieren(ergebnis) }
             pille.zeigen(eingefuegt ? .fertig : .hinweis(AXIsProcessTrusted() ? "In der Zwischenablage" : "Bedienungshilfen fehlen, Text liegt in der Zwischenablage"))
             ton("Glass")
             speicher.diktatHinzufuegen(Diktat(id: UUID().uuidString, zeit: jetztMs(), dauer: dauer, roh: roh, text: ergebnis, app: app))
             protokoll("Diktat: \(String(format: "%.1f", dauer)) s, \(Textarbeit.anzahlWoerter(ergebnis)) Wörter, \(app) · "
-                      + "Erkennung \(String(format: "%.1f", erkennung)) s" + (spracheText.isEmpty ? "" : " (\(spracheText))") + " · \(info) · "
+                      + weckInfo + "Erkennung \(String(format: "%.1f", erkennung)) s" + (spracheText.isEmpty ? "" : " (\(spracheText))") + " · \(info) · "
                       + "Wartezeit \(String(format: "%.1f", Date().timeIntervalSince(t0))) s")
             zustandSenden()
         }
