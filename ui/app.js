@@ -1002,7 +1002,7 @@ function startMock() {
     rechte: { mikrofon: 'ja', bedienungshilfen: 'nein', bildschirm: 'offen' },
     einstellungen: {
       taste: 'rechte-option', sprache: 'de', aufraeumen: true, einfuegen: true, toene: true, systemton: true,
-      woerter: ['Claude Code', 'n8n', 'Kenzo Weiss', 'AssemblyAI', 'Budget Indicator'],
+      woerter: ['Claude Code', 'n8n', 'Kubernetes', 'Angular', 'Budget Indicator'],
       ersetzungen: [{ von: 'Cloud Code', nach: 'Claude Code' }, { von: 'en acht en', nach: 'n8n' }],
     },
     aufnahme: { art: null, seit: 0, titel: '' },

@@ -3,6 +3,9 @@
 # Kein Xcode-Projekt, nur swiftc (wie Komorebi).
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Eine Stelle für die Version. Bei einer neuen Fassung hier hochsetzen,
+# in CHANGELOG.md eine Zeile ergänzen und im koe-Repo einen Tag setzen.
+VERSION="$(tr -d " \n" < "$APP_DIR/VERSION")"
 BUNDLE="$APP_DIR/build/Koe.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/ui" "$BUNDLE/Contents/Resources/helfer"
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/koe-clang-cache"
@@ -32,7 +35,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$APP_DIR/build/AppIcon.iconset" -o "$BUNDLE/Contents/Resources/AppIcon.icns"
 
-cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
+cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -41,8 +44,8 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Koe</string>
 <key>CFBundleDisplayName</key><string>Koe</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>$VERSION</string>
+<key>CFBundleVersion</key><string>$VERSION</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

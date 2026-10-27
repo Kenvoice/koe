@@ -1,1 +1,20 @@
+# Baut build.sh, liegt danach als /Applications/Koe.app
 build/
+
+# macOS
+.DS_Store
+._*
+
+# Protokolle und Vorschnitte, die beim Arbeiten anfallen
+*.log
+.cache/
+
+# Nichts aus dem Datenordner der App hier ablegen — er liegt ohnehin
+# unter ~/Library/Application Support/Koe, aber falls doch mal was
+# hereinrutscht: Diktate und Transkripte gehen niemanden etwas an.
+Transkripte/
+diktate.json
+einstellungen.json
+ports.json
+Modelle/
+llm/

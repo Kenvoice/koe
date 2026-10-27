@@ -136,15 +136,17 @@ Zeiten pro Diktat stehen in `Logs/koe.log`, Diktattexte nicht.
 src/        Swift, ein Build ohne Xcode-Projekt (build.sh ruft swiftc auf)
 ui/         die Oberfläche als HTML in einem WebView, offline
 helfer/     sprecher.py für die Sprechertrennung
-guide/      Anleitung zum Nachbauen mit Claude Code (PDF-Vorlage)
 ```
 
 `build.sh` baut, signiert und installiert nach `/Applications/Koe.app`.
 `ui/index.html` lässt sich auch direkt im Browser öffnen, dann läuft die
 Oberfläche mit Beispieldaten und ohne App.
 
-Koe ist mit [Claude Code](https://claude.com/claude-code) entstanden. Wie,
-Schritt für Schritt, steht in `guide/`.
+Koe ist mit [Claude Code](https://claude.com/claude-code) entstanden, in
+knapp zwei Wochen und ohne Xcode-Projekt. Es gibt dazu eine Anleitung zum
+Nachbauen in fünf Bauteilen — frag danach auf
+[LinkedIn](https://www.linkedin.com/in/kenzo-weiss-ki-automatisierung) oder
+sieh auf dem [YouTube-Kanal](https://www.youtube.com/@Ken-Automation2) nach.
 
 ## Fremde Teile
 

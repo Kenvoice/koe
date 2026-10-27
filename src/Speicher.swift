@@ -59,17 +59,11 @@ struct Einstellungen: Codable {
     var einfuegen = true
     var toene = true
     var systemton = true
-    var woerter = ["Claude Code", "Claude", "n8n", "AIOS", "Kenzo", "HyperFrames", "LinkedIn", "YouTube", "Workflow", "Mittelstand", "Brand Book"]
-    var ersetzungen = [
-        Ersetzung(von: "Cloud Code", nach: "Claude Code"),
-        Ersetzung(von: "CloudCode", nach: "Claude Code"),
-        Ersetzung(von: "Cloud-Code", nach: "Claude Code"),
-        Ersetzung(von: "Clot Code", nach: "Claude Code"),
-        Ersetzung(von: "Klo Code", nach: "Claude Code"),
-        Ersetzung(von: "N8N", nach: "n8n"),
-        Ersetzung(von: "N 8 N", nach: "n8n"),
-        Ersetzung(von: "Brandbook", nach: "Brand Book"),
-    ]
+    /// Eigennamen, die Whisper kennen soll, und Ersetzungen danach — beides
+    /// füllt jeder selbst in den Einstellungen. Was hier stünde, bekäme jeder
+    /// Nutzer in sein Wörterbuch, deshalb leer. Beispiele stehen in der README.
+    var woerter: [String] = []
+    var ersetzungen: [Ersetzung] = []
 
     init() {}
 
