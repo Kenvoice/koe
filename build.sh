@@ -3,7 +3,6 @@
 # Kein Xcode-Projekt, nur swiftc (wie Komorebi).
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-AIOS_DIR="$(cd "$APP_DIR/../.." && pwd)"
 BUNDLE="$APP_DIR/build/Koe.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources/ui" "$BUNDLE/Contents/Resources/helfer"
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/koe-clang-cache"
@@ -20,8 +19,6 @@ xcrun swiftc -O -swift-version 5 -module-cache-path "$SWIFT_MODULECACHE_PATH" \
 
 cp "$APP_DIR/ui/index.html" "$APP_DIR/ui/style.css" "$APP_DIR/ui/app.js" "$BUNDLE/Contents/Resources/ui/"
 if [ -f "$APP_DIR/helfer/sprecher.py" ]; then cp "$APP_DIR/helfer/sprecher.py" "$BUNDLE/Contents/Resources/helfer/"; fi
-printf '%s\n' "$AIOS_DIR" > "$BUNDLE/Contents/Resources/aios-root.txt"
-
 # App-Symbol
 if [ ! -f "$APP_DIR/build/icon.png" ] || [ "$APP_DIR/src/Icon.swift" -nt "$APP_DIR/build/icon.png" ]; then
   xcrun swiftc -module-cache-path "$SWIFT_MODULECACHE_PATH" -framework Cocoa "$APP_DIR/src/Icon.swift" -o "$APP_DIR/build/make-icon"

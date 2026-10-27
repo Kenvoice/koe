@@ -35,16 +35,15 @@ enum Ports {
     static var whisper = 4760
     static var llm = 4770
 
-    /// Liest die Ports aus apps/ports.json, wenn das AIOS-Repo bekannt ist.
+    /// Belegt ein anderes Programm einen der beiden Ports, lassen sie sich in
+    /// ~/Library/Application Support/Koe/ports.json umstellen: {"whisper": 4760, "llm": 4770}.
+    /// Fehlt die Datei, gelten die Werte oben.
     static func laden() {
-        guard let wurzel = try? String(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("aios-root.txt"), encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-        let url = URL(fileURLWithPath: wurzel).appendingPathComponent("apps/ports.json")
+        let url = Pfade.basis.appendingPathComponent("ports.json")
         guard let daten = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: daten) as? [String: Any],
-              let dienste = json["dienste"] as? [String: Any] else { return }
-        if let w = (dienste["koe-whisper"] as? [String: Any])?["port"] as? Int { whisper = w }
-        if let l = (dienste["koe-llm"] as? [String: Any])?["port"] as? Int { llm = l }
+              let json = try? JSONSerialization.jsonObject(with: daten) as? [String: Any] else { return }
+        if let w = json["whisper"] as? Int, (1024...65535).contains(w) { whisper = w }
+        if let l = json["llm"] as? Int, (1024...65535).contains(l) { llm = l }
     }
 }
 
