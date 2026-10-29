@@ -76,7 +76,7 @@ final class Transkription {
         let ordner = speicher.ordner(id)
         let e = await MainActor.run { speicher.einstellungen }
         guard FileManager.default.fileExists(atPath: Pfade.whisperLarge.path) else {
-            throw fehler("Modell large-v3 fehlt in \(Pfade.modelle.path)")
+            throw fehler("Für Meetings und Dateien fehlt noch das große Modell. Einstellungen → Meetings und Dateien → Nachladen.")
         }
         var segmente: [Segment] = []
 
@@ -375,7 +375,7 @@ final class Transkription {
             p.executableURL = URL(fileURLWithPath: pfad)
             p.arguments = args
             var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+            env["PATH"] = Pfade.suchpfad
             env["HF_HUB_OFFLINE"] = "1"
             p.environment = env
             let aus = Pipe(), err = Pipe()

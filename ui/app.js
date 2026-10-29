@@ -139,6 +139,7 @@ const ui = {
   modal: null,             // { titel, text, ok, aktion }
   pegel: { mikro: 0, system: 0 },
   fokus: null,             // gewünschter Fokus nach dem nächsten Rendern
+  mitDateien: true,        // Einrichtung: auch Meetings und Dateien laden
 };
 
 const find = (zz, id) => (zz?.transkripte ?? []).find((x) => x.id === id);
@@ -359,7 +360,7 @@ function viewEinstellungen() {
     ['llm', 'Aufräumen'],
     ['sprecher', 'Sprechertrennung'],
   ];
-  const WORT = { bereit: 'bereit', startet: 'startet', fehlt: 'fehlt', fehler: 'Fehler' };
+  const WORT = { bereit: 'bereit', startet: 'startet', ruht: 'ruht', fehlt: 'fehlt', fehler: 'Fehler' };
 
   return (
     kopf('Einstellungen') +
@@ -427,6 +428,8 @@ function viewEinstellungen() {
         <span class="recht-status ${d.status === 'fehler' ? 'nein' : ''}" style="min-width:0"><i class="sd sd-${esc(d.status)}"></i>${esc(WORT[d.status] ?? d.status)}</span>
       </div>`;
     }).join('')}</div>
+
+    ${nachladenBlock()}
 
     <div class="sek-kopf"><h2><i class="punkt cyan"></i>Speicherort</h2></div>
     <div class="gruppe"><div class="reihe stapel" style="padding:16px 0">
@@ -534,6 +537,80 @@ function viewDetail() {
 
 /* --- Navigation, Dialog --- */
 
+/* --- Einrichtung beim ersten Start --- */
+
+/** In den Einstellungen: Meetings und Dateien nachladen, wenn bei der Einrichtung weggelassen. */
+function nachladenBlock() {
+  const e = z.einrichtung;
+  if (!e || (!e.dateienFehlen && !e.laeuft && !e.fehler)) return '';
+  const teile = (e.teile ?? []).filter((t) => t.gruppe === 'dateien');
+  const summe = teile.filter((t) => t.status !== 'fertig').reduce((n, t) => n + t.bytes, 0);
+  return `<div class="sek-kopf"><h2><i class="punkt"></i>Meetings und Dateien</h2>${
+    e.laeuft ? `<button class="btn btn-ghost btn-klein" data-act="einr-abbrechen">Abbrechen</button>`
+    : e.dateienFehlen ? `<button class="btn btn-primary btn-klein" data-act="einr-nachladen">${ico('speichern', 14)}Nachladen (${fmtGb(summe)})</button>` : ''}</div>
+    ${e.fehler ? `<div class="einr-fehler">${ico('warn', 16)}<span>${esc(e.fehler)}</span></div>` : ''}
+    ${einrichtungsListe(teile)}`;
+}
+
+function fmtGb(bytes) {
+  const gb = (bytes || 0) / 1e9;
+  if (gb < 0.1) return `${Math.max(1, Math.round((bytes || 0) / 1e6))} MB`;
+  return `${gb.toLocaleString('de-DE', { maximumFractionDigits: 1, minimumFractionDigits: gb < 10 ? 1 : 0 })} GB`;
+}
+
+/** Die Teile der Einrichtung als Liste mit Balken. */
+function einrichtungsListe(teile) {
+  return `<div class="gruppe">${teile.map((t) => {
+    const anteil = t.bytes ? Math.min(100, Math.round((t.geladen / t.bytes) * 100)) : 0;
+    const rechts = t.status === 'fertig' ? `<span class="recht-status"><i class="sd"></i>Fertig</span>`
+      : t.status === 'laeuft' ? `<span class="recht-status"><i class="sd sd-startet"></i>${anteil} %</span>`
+      : t.status === 'fehler' ? `<span class="recht-status nein"><i class="sd sd-fehler"></i>Fehler</span>`
+      : `<span class="recht-status"><i class="sd sd-fehlt"></i>${t.status === 'wartet' ? 'Wartet' : fmtGb(t.bytes)}</span>`;
+    return `<div class="reihe einr-reihe">
+      <div class="reihe-text"><b>${esc(t.name)}</b><span>${esc(t.zweck)}</span>
+        ${t.status === 'laeuft' ? `<div class="balken"><b style="width:${anteil}%"></b></div>` : ''}
+      </div>
+      ${rechts}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function viewEinrichtung() {
+  const e = z.einrichtung;
+  const teile = (e.teile ?? []).filter((t) => t.gruppe === 'diktat' || ui.mitDateien || t.status !== 'fehlt');
+  const offen = teile.filter((t) => t.status !== 'fertig');
+  const summe = offen.reduce((n, t) => n + t.bytes, 0);
+  const geladen = offen.reduce((n, t) => n + (t.geladen || 0), 0);
+  const zuWenig = e.frei && e.frei < summe + 2e9;
+  const dateienOffen = (e.teile ?? []).some((t) => t.gruppe === 'dateien' && t.status !== 'fertig');
+
+  return `<div class="einr">
+    <div class="marke einr-marke"><b>Koe</b><span lang="ja">声</span></div>
+    <h1>Koe einrichten</h1>
+    <p class="einr-text">Einmal lädt Koe die Sprachmodelle auf deinen Mac. Danach arbeitet Koe ohne Internet, und nichts, was du sagst, verlässt den Rechner.</p>
+
+    ${e.laeuft ? '' : dateienOffen ? `<div class="gruppe einr-wahl">
+      <div class="reihe">
+        <div class="reihe-text"><b>Auch Meetings und Dateien</b><span>Großes Modell und Sprechertrennung, zusätzlich rund 3,1 GB. Lässt sich später in den Einstellungen nachladen.</span></div>
+        <button class="schalter" role="switch" aria-checked="${ui.mitDateien}" aria-label="Auch Meetings und Dateien" data-act="einr-dateien"></button>
+      </div>
+    </div>` : ''}
+
+    <div class="einr-fuss">
+      ${e.laeuft
+        ? `<div class="einr-gesamt"><b>${fmtGb(geladen)} von ${fmtGb(summe)}</b><span>Du kannst Koe dabei offen lassen oder das Fenster schließen. Abgebrochen? Beim nächsten Mal geht es an derselben Stelle weiter.</span></div>
+           <button class="btn btn-ghost" data-act="einr-abbrechen">Abbrechen</button>`
+        : `<div class="einr-gesamt"><b>${fmtGb(summe)} laden</b><span>${zuWenig ? `Nur ${fmtGb(e.frei)} frei, das reicht nicht.` : `Frei auf dem Mac: ${fmtGb(e.frei)}. Je nach Internet 10 bis 30 Minuten.`}</span></div>
+           <button class="btn btn-primary" data-act="einr-start"${zuWenig ? ' disabled' : ''}>${e.fehler ? 'Noch mal versuchen' : 'Einrichten'}</button>`}
+    </div>
+    ${e.fehler ? `<div class="einr-fehler">${ico('warn', 16)}<span>${esc(e.fehler)}</span></div>` : ''}
+    ${einrichtungsListe(teile)}
+    <p class="lokal-hinweis">${ico('schloss', 15)}Geladen wird nur jetzt, von Hugging Face, GitHub und dem Python-Paketverzeichnis.</p>
+  </div>`;
+}
+
+const einrichtungZeigen = () => !!(z?.einrichtung && (z.einrichtung.diktatFehlt || ui.einrichtungOffen));
+
 function renderNav() {
   const aktiv = ui.ansicht === 'detail' ? ui.zurueckZu : ui.ansicht;
   const trs = z.transkripte ?? [];
@@ -545,8 +622,8 @@ function renderNav() {
     ['datei', 'Datei', 'datei'],
     ['einstellungen', 'Einstellungen', 'regler'],
   ];
-  const WORT = { bereit: 'bereit', startet: 'startet', fehlt: 'fehlt', fehler: 'Fehler' };
-  const DIENSTE = [['whisper', 'Sprache'], ['llm', 'Aufräumen'], ['sprecher', 'Sprecher']];
+  const WORT = { bereit: 'bereit', startet: 'startet', ruht: 'ruht', fehlt: 'fehlt', fehler: 'Fehler' };
+  const DIENSTE =[['whisper', 'Sprache'], ['llm', 'Aufräumen'], ['sprecher', 'Sprecher']];
   const fehlt = fehlendeRechte();
   const art = z.aufnahme?.art;
 
@@ -627,6 +704,14 @@ function render() {
     return;
   }
   const fokusAlt = merkeFokus();
+  const einr = einrichtungZeigen();
+  document.querySelector('.app').classList.toggle('nur-einrichtung', einr);
+  if (einr) {
+    setHtml(navEl, '');
+    setHtml(viewEl, viewEinrichtung());
+    setHtml(modalEl, '');
+    return;
+  }
   setHtml(navEl, renderNav());
   const VIEWS = { diktate: viewDiktate, meetings: viewMeetings, datei: viewDatei, einstellungen: viewEinstellungen, detail: viewDetail };
   setHtml(viewEl, (VIEWS[ui.ansicht] ?? viewDiktate)());
@@ -838,6 +923,12 @@ const aktionen = {
     });
   },
 
+  // Einrichtung
+  'einr-dateien': () => { ui.mitDateien = !ui.mitDateien; render(); },
+  'einr-start': () => { ui.einrichtungOffen = true; senden('einrichtung.start', { mitDateien: ui.mitDateien }); },
+  'einr-abbrechen': () => senden('einrichtung.abbrechen'),
+  'einr-nachladen': () => senden('einrichtung.start', { mitDateien: true }),
+
   // Dialog
   'modal-ok': () => { const m = ui.modal; ui.modal = null; render(); m?.aktion?.(); },
   'modal-abbruch': () => { ui.modal = null; render(); },
@@ -895,6 +986,12 @@ window.koe = {
   zustand(neu) {
     const alt = z;
     z = neu;
+    // Die Einrichtungsansicht bleibt offen, solange sie läuft oder ein Fehler zu lesen ist.
+    const e = z.einrichtung;
+    if (ui.einrichtungOffen && e && !e.laeuft && !e.diktatFehlt && !e.fehler) {
+      ui.einrichtungOffen = false;
+      if (alt?.einrichtung?.diktatFehlt) toast('Koe ist eingerichtet.', 'info');
+    }
     if (z.aufnahme?.art !== 'meeting') ui.pegel = { mikro: 0, system: 0 };
     if (ui.ansicht === 'detail') {
       const tr = find(z, ui.detailId);
@@ -996,7 +1093,7 @@ function startMock() {
   const mz = {
     dienste: {
       whisper: { status: 'bereit', text: 'Whisper large-v3-turbo, läuft auf dem Mac' },
-      llm: { status: 'bereit', text: 'Qwen3 4B, lokal' },
+      llm: { status: 'bereit', text: 'Gemma 4 geladen' },
       sprecher: { status: 'startet', text: 'Modell wird geladen' },
     },
     rechte: { mikrofon: 'ja', bedienungshilfen: 'nein', bildschirm: 'offen' },
@@ -1023,7 +1120,46 @@ function startMock() {
       { id: 't6', titel: 'Rückruf Lieferant.mp4', zeit: jetzt - 3 * TAG, dauer: 410, quelle: 'datei', status: 'fertig', schritt: '', fortschritt: 1, fehler: '', woerter: 982, sprecher: ['ich', 's1'] },
     ],
     speicherort: '~/Library/Application Support/Koe',
+    einrichtung: {
+      laeuft: false, fehler: '', frei: 182e9,
+      teile: [
+        ['turbo', 'Spracherkennung', 'Whisper large-v3-turbo fürs Diktat', 'diktat', 1624555275],
+        ['silero', 'Stille-Erkenner', 'Silero, schneidet Pausen weg', 'diktat', 885098],
+        ['python', 'Python und Pakete', 'mlx-lm für Gemma, sherpa-onnx für die Sprecher', 'diktat', 450e6],
+        ['gemma', 'Gemma 4', 'Räumt den Text auf: Füllwörter, Satzzeichen', 'diktat', 5179e6],
+        ['large', 'Große Spracherkennung', 'Whisper large-v3 für Meetings und Dateien', 'dateien', 3095033483],
+        ['segmentierung', 'Sprecher erkennen', 'pyannote-Segmentierung', 'dateien', 7e6],
+        ['stimmen', 'Stimmen unterscheiden', 'WeSpeaker ResNet34', 'dateien', 26530550],
+      ].map(([id, name, zweck, gruppe, bytes]) => ({ id, name, zweck, gruppe, bytes, status: 'fertig', geladen: bytes })),
+    },
   };
+  // index.html#einrichtung zeigt den ersten Start, #nachladen die Einstellungen ohne Meetings-Modelle.
+  const mzE = mz.einrichtung;
+  const neuBerechnen = () => {
+    mzE.diktatFehlt = mzE.teile.some((t) => t.gruppe === 'diktat' && t.status !== 'fertig');
+    mzE.dateienFehlen = mzE.teile.some((t) => t.gruppe === 'dateien' && t.status !== 'fertig');
+  };
+  if (location.hash === '#einrichtung') mzE.teile.forEach((t) => { t.status = 'fehlt'; t.geladen = 0; });
+  if (location.hash === '#nachladen') {
+    mzE.teile.filter((t) => t.gruppe === 'dateien').forEach((t) => { t.status = 'fehlt'; t.geladen = 0; });
+    ui.ansicht = 'einstellungen';
+  }
+  neuBerechnen();
+  let einrTimer = null;
+  function einrSimulieren(mitDateien) {
+    mzE.laeuft = true;
+    const liste = mzE.teile.filter((t) => t.status !== 'fertig' && (mitDateien || t.gruppe === 'diktat'));
+    liste.forEach((t) => { t.status = 'wartet'; });
+    einrTimer = setInterval(() => {
+      const t = liste.find((x) => x.status !== 'fertig');
+      if (!t) { clearInterval(einrTimer); mzE.laeuft = false; neuBerechnen(); push(); return; }
+      t.status = 'laeuft';
+      t.geladen = Math.min(t.bytes, t.geladen + Math.max(t.bytes / 6, 1));
+      if (t.geladen >= t.bytes) t.status = 'fertig';
+      neuBerechnen();
+      push();
+    }, 400);
+  }
 
   const push = () => window.koe.zustand(structuredClone(mz));
   const trById = (id) => mz.transkripte.find((t) => t.id === id);
@@ -1134,6 +1270,16 @@ function startMock() {
         for (const k of Object.keys(mz.dienste)) mz.dienste[k].status = 'startet';
         push();
         setTimeout(() => { for (const k of Object.keys(mz.dienste)) mz.dienste[k].status = 'bereit'; push(); }, 2500);
+        break;
+      case 'einrichtung.start':
+        einrSimulieren(d.mitDateien);
+        break;
+      case 'einrichtung.abbrechen':
+        clearInterval(einrTimer);
+        mzE.laeuft = false;
+        mzE.teile.forEach((t) => { if (t.status !== 'fertig') t.status = 'fehlt'; });
+        neuBerechnen();
+        push();
         break;
       case 'ordner.oeffnen':
       case 'transkript.finder':

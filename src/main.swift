@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 final class Koe: NSObject, NSApplicationDelegate {
     let speicher = Speicher()
     let dienste = Dienste()
+    let einrichtung = Einrichtung()
     let taste = Taste()
     let mikrofon = Mikrofon()
     let systemton = Systemton()
@@ -41,6 +42,10 @@ final class Koe: NSObject, NSApplicationDelegate {
         menueEinrichten()
 
         dienste.geaendert = { [weak self] in self?.zustandSenden() }
+        dienste.beschaeftigt = { [weak self] in
+            guard let self else { return false }
+            return self.aufnahmeArt != nil || self.speicher.transkripte.contains { ["wartet", "laeuft"].contains($0.status) }
+        }
         transkription.geaendert = { [weak self] in self?.zustandSenden() }
         transkription.fertig = { [weak self] id in
             guard let self, let m = self.speicher.meta(id) else { return }
@@ -58,9 +63,16 @@ final class Koe: NSObject, NSApplicationDelegate {
         bedienungshilfenVorher = AXIsProcessTrusted()
         taste.einrichten()
 
+        einrichtung.geaendert = { [weak self] in self?.zustandSenden() }
+        einrichtung.fertig = { [weak self] in
+            guard let self else { return }
+            self.dienste.neustart(self.speicher.einstellungen)
+            self.rechteAnfragen()
+        }
         dienste.starten(speicher.einstellungen)
         transkription.wiederaufnehmen()
-        rechteAnfragen()
+        // Beim ersten Start zeigt Koe erst die Einrichtung; nach den Rechten fragt es danach.
+        if !einrichtung.diktatFehlt { rechteAnfragen() }
 
         // Rechte werden in den Systemeinstellungen erteilt; Koe merkt es von selbst.
         rechteTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -77,6 +89,7 @@ final class Koe: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ n: Notification) {
         if aufnahmeArt == "meeting" { meetingStoppen(verwerfen: false) }
+        einrichtung.abbrechen()
         dienste.stoppen()
     }
 
@@ -183,6 +196,8 @@ final class Koe: NSObject, NSApplicationDelegate {
                  "sprecher": $0.sprecher] as [String: Any]
             },
             "speicherort": Pfade.basis.path,
+            "einrichtung": einrichtung.dict,
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
         ]
     }
 
@@ -252,6 +267,10 @@ final class Koe: NSObject, NSApplicationDelegate {
             dienste.neustart(speicher.einstellungen)
         case "ordner.oeffnen":
             NSWorkspace.shared.open(Pfade.basis)
+        case "einrichtung.start":
+            einrichtung.starten(mitDateien: d["mitDateien"] as? Bool ?? true)
+        case "einrichtung.abbrechen":
+            einrichtung.abbrechen()
         default:
             protokoll("Unbekannter Befehl: \(cmd)")
         }
@@ -293,9 +312,10 @@ final class Koe: NSObject, NSApplicationDelegate {
         switch e {
         case .start:
             guard aufnahmeArt == nil else { taste.zuruecksetzen(); return }
-            guard dienste.whisper.status == "bereit" else {
+            // Lädt die Spracherkennung noch oder ruht sie, darf trotzdem gesprochen werden: sie lädt, während man spricht.
+            guard ["bereit", "startet", "ruht"].contains(dienste.whisper.status) else {
                 taste.zuruecksetzen()
-                pille.zeigen(.hinweis(dienste.whisper.status == "startet" ? "Spracherkennung lädt noch" : "Spracherkennung nicht bereit"))
+                pille.zeigen(.hinweis("Spracherkennung nicht bereit"))
                 return
             }
             do {
@@ -307,6 +327,7 @@ final class Koe: NSObject, NSApplicationDelegate {
             }
             aufnahmeArt = "diktat"
             aufnahmeSeit = jetztMs()
+            dienste.aufwecken(speicher.einstellungen)
             whisperWecken()
             gemmaWecken()
             gemmaTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.gemmaWecken() }
@@ -384,6 +405,16 @@ final class Koe: NSObject, NSApplicationDelegate {
         let e = speicher.einstellungen
         let t0 = Date()
         let wav = wavDaten(samples)
+        // Hat die Spracherkennung geruht, lädt sie seit dem Tastendruck. Darauf warten, höchstens 60 s.
+        while await MainActor.run(body: { self.dienste.whisper.status == "startet" }), Date().timeIntervalSince(t0) < 60 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let ladeWarten = Date().timeIntervalSince(t0)
+        guard await MainActor.run(body: { self.dienste.whisper.status == "bereit" }) else {
+            protokoll("Diktat: Spracherkennung nicht bereit nach \(String(format: "%.1f", ladeWarten)) s")
+            await MainActor.run { pille.zeigen(.hinweis("Spracherkennung nicht bereit")) }
+            return
+        }
         /// Eine Anfrage an whisper-server. Mit `sprache` ist die Sprache fest, sonst gilt die beim Start gewählte.
         /// `liste` holt zusätzlich die Wahrscheinlichkeit jeder Sprache (verbose_json).
         func anfrage(_ sprache: String?, liste: Bool) async throws -> [String: Any] {
@@ -430,6 +461,12 @@ final class Koe: NSObject, NSApplicationDelegate {
         var text = roh
         // Für das Protokoll: wie lange das Aufräumen gedauert hat und wie es ausging. Diktattexte kommen nicht ins Log.
         var aufraeumInfo = "Aufräumen aus"
+        // Hat Gemma geruht, lädt es seit dem Tastendruck wieder. Darauf warten, höchstens 30 s.
+        let tLaden = Date()
+        while e.aufraeumen, await MainActor.run(body: { self.dienste.llm.status == "startet" }), Date().timeIntervalSince(tLaden) < 30 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let gemmaLaden = Date().timeIntervalSince(tLaden)
         if e.aufraeumen, dienste.llm.status == "bereit", Textarbeit.anzahlWoerter(roh) >= 3 {
             // Ist Gemma noch am Aufwachen, erst darauf warten (höchstens 20 s). Sonst stellt sich das Aufräumen
             // hinten an, und das Zeitlimit läuft ab, bevor Gemma überhaupt dran ist. Dann käme nur der Rohtext.
@@ -447,6 +484,7 @@ final class Koe: NSObject, NSApplicationDelegate {
             } else {
                 hinweise.append("ohne Ergebnis, Rohtext eingefügt")
             }
+            if gemmaLaden >= 0.3 { hinweise.append("vorher \(String(format: "%.1f", gemmaLaden)) s aufs Laden gewartet") }
             if gewartet >= 0.3 { hinweise.append("vorher \(String(format: "%.1f", gewartet)) s aufs Aufwachen gewartet") }
             aufraeumInfo = "Aufräumen \(String(format: "%.1f", Date().timeIntervalSince(t1))) s"
                 + (hinweise.isEmpty ? "" : " (\(hinweise.joined(separator: ", ")))")
@@ -457,7 +495,8 @@ final class Koe: NSObject, NSApplicationDelegate {
         let info = aufraeumInfo
         let spracheText = sprachInfo
         await MainActor.run {
-            let weckInfo = whisperWeckDauer.map { "Wecken \(String(format: "%.1f", $0)) s · " } ?? ""
+            let weckInfo = (ladeWarten >= 0.3 ? "Laden \(String(format: "%.1f", ladeWarten)) s · " : "")
+                + (whisperWeckDauer.map { "Wecken \(String(format: "%.1f", $0)) s · " } ?? "")
             let eingefuegt = e.einfuegen && Einfuegen.text(ergebnis)
             if !eingefuegt { Einfuegen.kopieren(ergebnis) }
             pille.zeigen(eingefuegt ? .fertig : .hinweis(AXIsProcessTrusted() ? "In der Zwischenablage" : "Bedienungshilfen fehlen, Text liegt in der Zwischenablage"))
@@ -506,6 +545,7 @@ final class Koe: NSObject, NSApplicationDelegate {
         meetingId = meta.id
         aufnahmeArt = "meeting"
         aufnahmeSeit = jetztMs()
+        dienste.aufwecken(speicher.einstellungen)   // die Spracherkennung bestimmt danach die Sprache vorab
         taste.zuruecksetzen()
         if mitSystem {
             Task {
@@ -589,6 +629,7 @@ final class Koe: NSObject, NSApplicationDelegate {
             zustandSenden()
             return
         }
+        dienste.aufwecken(speicher.einstellungen)
         transkription.einreihen(meta.id)
         fenster.zeigen()
         zustandSenden()
@@ -642,8 +683,9 @@ extension Koe: NSMenuDelegate {
 
 enum Kommandozeile {
     static func ausfuehren(_ args: [String]) -> Never {
+        if args.first == "einrichten" { einrichten(mitDateien: !args.contains("--nur-diktat")) }
         guard args.count >= 2, args[0] == "datei" else {
-            FileHandle.standardError.write("Aufruf: Koe --cli datei <pfad> [--titel \"…\"]\n".data(using: .utf8)!)
+            FileHandle.standardError.write("Aufruf: Koe --cli datei <pfad> [--titel \"…\"]  |  Koe --cli einrichten [--nur-diktat]\n".data(using: .utf8)!)
             exit(2)
         }
         let quelle = URL(fileURLWithPath: (args[1] as NSString).expandingTildeInPath)
@@ -685,6 +727,30 @@ enum Kommandozeile {
             exit(0)
         }
         transkription.einreihen(meta.id)
+        RunLoop.main.run()
+        exit(0)
+    }
+
+    /// Dieselbe Einrichtung wie im Fenster, Fortschritt auf stderr. Zum Testen und für Skripte.
+    static func einrichten(mitDateien: Bool) -> Never {
+        let e = Einrichtung()
+        var letzte = ""
+        e.geaendert = {
+            let zeile = e.teile.filter { $0.status != "fertig" || $0.geladen > 0 }
+                .map { t in t.status == "laeuft" ? "\(t.name) \(t.bytes > 0 ? Int(Double(t.geladen) / Double(t.bytes) * 100) : 0) %" : "\(t.name): \(t.status)" }
+                .joined(separator: " · ")
+            if zeile != letzte { letzte = zeile; FileHandle.standardError.write("\(zeile)\n".data(using: .utf8)!) }
+        }
+        e.starten(mitDateien: mitDateien)
+        guard e.laeuft else {
+            FileHandle.standardError.write((e.fehler.isEmpty ? "Alles schon da.\n" : "Fehler: \(e.fehler)\n").data(using: .utf8)!)
+            exit(e.fehler.isEmpty ? 0 : 1)
+        }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            guard !e.laeuft else { return }
+            FileHandle.standardError.write((e.fehler.isEmpty ? "Fertig.\n" : "Fehler: \(e.fehler)\n").data(using: .utf8)!)
+            exit(e.fehler.isEmpty ? 0 : 1)
+        }
         RunLoop.main.run()
         exit(0)
     }

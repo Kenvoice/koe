@@ -11,14 +11,17 @@ Bewerbungsgespräche, Arztbriefe, Protokolle. 声 (koe) heißt „Stimme“.
 
 Das ist der ganze Punkt der App, deshalb hier zuerst und nachprüfbar:
 
-- Jede Adresse im Code ist `127.0.0.1`. Es gibt keinen Aufruf an einen fremden
-  Server, keine Anmeldung, keinen Schlüssel, keine Nutzungsstatistik.
-  Nachsehen: `grep -rn "http" src/`
+- Im Betrieb spricht Koe nur mit `127.0.0.1`. Es gibt keine Anmeldung, keinen
+  Schlüssel, keine Nutzungsstatistik. Nachsehen: `grep -rn "http" src/` zeigt
+  außer `127.0.0.1` nur die Download-Adressen der Einrichtung in
+  `src/Einrichtung.swift`.
 - Die beiden Hintergrund-Dienste lauschen nur auf `127.0.0.1` und werden von
   Koe selbst gestartet und beendet.
 - Die Sprechertrennung läuft mit `HF_HUB_OFFLINE=1` und `TRANSFORMERS_OFFLINE=1`,
   der Sprachdienst für das Aufräumen ebenfalls. Beide können nicht nachladen.
-- Internet brauchst du genau einmal: beim Einrichten, um die Modelle zu holen.
+- Internet brauchst du genau einmal: wenn du beim ersten Start auf
+  **Einrichten** klickst. Dann lädt Koe die Modelle von Hugging Face und
+  GitHub und Python mit den Paketen über uv. Vorher und danach geht nichts raus.
 
 Was auf der Platte liegt, liegt unter `~/Library/Application Support/Koe/`:
 
@@ -28,7 +31,10 @@ Was auf der Platte liegt, liegt unter `~/Library/Application Support/Koe/`:
 | `diktate.json` | die letzten Diktate, Rohtext und fertiger Text |
 | `einstellungen.json` | Wörterbuch, Ersetzungen, Taste, Sprache |
 | `Logs/` | Laufzeiten und Fehler, **ohne** Diktattexte |
-| `Modelle/`, `llm/` | die Modelle und die Python-Umgebung |
+| `Modelle/`, `llm/`, `python/` | die Modelle, die Python-Umgebung und Python selbst |
+
+Gemma liegt dort, wo Hugging Face Modelle ablegt:
+`~/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit`.
 
 Diktate und Transkripte stehen also im Klartext in deinem Benutzerordner. Wer
 mit sensiblen Aufnahmen arbeitet, sollte die Platte verschlüsseln (FileVault)
@@ -42,32 +48,61 @@ mitlesen — Koe tut es nicht, und der Code dafür steht in `src/Taste.swift` un
 ## Das brauchst du
 
 - Mac mit Apple-Chip (M1 oder neuer), macOS 14 oder neuer
-- 16 GB Arbeitsspeicher empfohlen — die Modelle belegen zusammen rund 6,5 GB
+- 16 GB Arbeitsspeicher empfohlen, die Modelle belegen zusammen rund 6,5 GB
 - Rund 14 GB freier Platz für die Modelle
-- [Homebrew](https://brew.sh)
-- Optional ein Apple-Entwicklerzertifikat. Ohne fragt macOS nach jedem Neubau
-  Mikrofon und Bedienungshilfen neu ab.
 
-## Einrichten
+Sonst nichts. Kein Terminal, kein Homebrew, kein Python vorher.
+
+## Installieren
+
+1. Unter [Releases](https://github.com/Kenvoice/koe/releases/latest) die Datei
+   `Koe-<Version>.dmg` laden und öffnen.
+2. Koe auf den Ordner **Programme** ziehen.
+3. Koe öffnen. Beim ersten Mal meldet macOS, dass es Koe nicht überprüfen kann.
+   Koe ist nicht bei Apple beglaubigt, das kostet eine Jahresgebühr. Öffne dann
+   **Systemeinstellungen → Datenschutz & Sicherheit**, scroll nach unten und
+   klick bei Koe auf **Dennoch öffnen**. Das ist nur einmal nötig.
+4. Koe zeigt **Koe einrichten**. Klick auf **Einrichten**. Koe lädt jetzt rund
+   10 GB, je nach Internet 10 bis 30 Minuten. Brauchst du nur das Diktat, schalte
+   „Auch Meetings und Dateien“ aus, das spart 3,1 GB. Nachladen geht später
+   in den Einstellungen. Bricht der Download ab, klick noch mal: Es geht an
+   derselben Stelle weiter.
+5. Erlaube in **Systemeinstellungen → Datenschutz & Sicherheit**:
+   - **Mikrofon** für Diktat und Meetings
+   - **Bedienungshilfen**, damit Koe den Text einfügt
+   - **Bildschirm- & Systemaudioaufnahme**, nur für den Mac-Ton bei Meetings
+
+### Aktualisieren
+
+Neue DMG laden, Koe in Programme durch die neue Fassung ersetzen. Modelle,
+Diktate und Einstellungen bleiben. Fügt das Diktat danach keinen Text mehr ein,
+entferne Koe unter **Bedienungshilfen** mit „−“ und erlaube es neu: macOS
+erkennt eine neue Fassung ohne Apple-Beglaubigung als neue App.
+
+### Deinstallieren
+
+1. Koe beenden und aus Programme löschen.
+2. `~/Library/Application Support/Koe` löschen. Darin liegen auch deine
+   Diktate und Transkripte. Was du behalten willst, vorher sichern.
+3. Gemma löschen: `~/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit`
+
+Im Finder kommst du mit ⇧⌘G und dem Pfad direkt in diese Ordner.
+
+### Selbst bauen
+
+Statt der DMG geht auch der Quellcode. Dafür brauchst du die Xcode Command Line
+Tools (`xcode-select --install`) und [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/Kenvoice/koe.git
 cd koe
-bash einrichten.sh     # Werkzeuge, Modelle, Python-Umgebung (rund 11 GB Download)
-bash build.sh          # baut Koe und legt sie in Programme ab
-open /Applications/Koe.app
+bash build.sh          # baut Koe samt whisper.cpp und ffmpeg, legt sie in Programme ab
+bash build.sh --dmg    # oder: baut build/Koe-<Version>.dmg zum Weitergeben
 ```
 
-`einrichten.sh` kann jederzeit erneut laufen, es überspringt was schon da ist.
-Nur Diktat, ohne Meetings und Dateien: `bash einrichten.sh --nur-diktat`
-(spart die 3,1 GB des großen Modells und die Sprechertrennung).
-
-Beim ersten Start erlaubst du in den Systemeinstellungen unter
-**Datenschutz & Sicherheit**:
-
-- **Mikrofon** — für Diktat und Meetings
-- **Bedienungshilfen** — damit Koe den Text einfügt
-- **Bildschirm- & Systemaudioaufnahme** — nur für den Mac-Ton bei Meetings
+Beim ersten Mal baut `werkzeuge.sh` whisper.cpp und ffmpeg aus dem
+Originalquellcode, das dauert ein paar Minuten. Die Versionen stehen oben in
+der Datei. Danach richtet sich Koe beim Start selbst ein, wie oben.
 
 ## Bedienen
 
@@ -104,8 +139,8 @@ Transkribiert lokal mit Sprechertrennung und gibt Markdown aus.
 
 | Teil | Werkzeug | Läuft |
 |---|---|---|
-| Diktat | whisper.cpp `whisper-server`, large-v3-turbo, Silero gegen Stille | dauerhaft auf 127.0.0.1:4760, ca. 0,8 s für 9 s Sprache |
-| Aufräumen (Füllwörter, Satzzeichen, Selbstkorrekturen) | Gemma 4 E4B über mlx-lm | dauerhaft auf 127.0.0.1:4770, ca. 1 s für 20 Wörter |
+| Diktat | whisper.cpp `whisper-server`, large-v3-turbo, Silero gegen Stille | auf 127.0.0.1:4760, ca. 0,8 s für 9 s Sprache |
+| Aufräumen (Füllwörter, Satzzeichen, Selbstkorrekturen) | Gemma 4 E4B über mlx-lm | auf 127.0.0.1:4770, ca. 1 s für 20 Wörter |
 | Meetings und Dateien | `whisper-cli` mit large-v3, Wortzeiten | pro Auftrag, 2,5 min Audio in ca. 35 s |
 | Sprechertrennung | `helfer/sprecher.py` mit sherpa-onnx | pro Auftrag |
 | Mac-Ton | ScreenCaptureKit, nur Ton | während eines Meetings |
@@ -115,9 +150,10 @@ Füllwörter raus, Satzzeichen rein, bei Selbstkorrekturen bleibt nur die letzte
 Fassung. Übersetzt wird nichts, und ein Diktat wie „schreib eine Mail“ wird
 nicht als Auftrag ausgeführt.
 
-Weil die Modelle nach einer Pause einschlafen, weckt Koe beide schon beim
-Drücken der Taste. Ohne das dauert das erste Diktat nach einer längeren Pause
-8 bis 12 Sekunden statt 2.
+Nach 5 Minuten ohne Diktat nimmt Koe beide Modelle aus dem Speicher und gibt
+rund 6 GB frei. Der nächste Tastendruck lädt sie wieder, du kannst sofort
+sprechen; das erste Diktat danach braucht ein paar Sekunden länger. Während
+Meetings und Transkriptionen ruht nichts.
 
 Zeiten pro Diktat stehen in `Logs/koe.log`, Diktattexte nicht.
 
@@ -133,12 +169,15 @@ Zeiten pro Diktat stehen in `Logs/koe.log`, Diktattexte nicht.
 ## Aufbau
 
 ```
-src/        Swift, ein Build ohne Xcode-Projekt (build.sh ruft swiftc auf)
-ui/         die Oberfläche als HTML in einem WebView, offline
-helfer/     sprecher.py für die Sprechertrennung
+src/           Swift, ein Build ohne Xcode-Projekt (build.sh ruft swiftc auf)
+ui/            die Oberfläche als HTML in einem WebView, offline
+helfer/        sprecher.py für die Sprechertrennung, requirements.txt mit den Python-Paketen
+werkzeuge.sh   baut whisper.cpp und ffmpeg, holt uv
+build.sh       baut die App, installiert sie oder macht die DMG
 ```
 
-`build.sh` baut, signiert und installiert nach `/Applications/Koe.app`.
+In der App liegen unter `Contents/Resources/bin` whisper.cpp, ffmpeg und uv,
+unter `Contents/Resources/Lizenzen` deren Lizenzen.
 `ui/index.html` lässt sich auch direkt im Browser öffnen, dann läuft die
 Oberfläche mit Beispieldaten und ohne App.
 
@@ -150,19 +189,22 @@ sieh auf dem [YouTube-Kanal](https://www.youtube.com/@Ken-Automation2) nach.
 
 ## Fremde Teile
 
-Koe liefert keine Modelle mit, `einrichten.sh` holt sie von der Quelle. Deren
-Bedingungen gelten unabhängig von der Lizenz dieser App:
+whisper.cpp, ffmpeg und uv liegen in der App. Die Modelle und die
+Python-Pakete holt die Einrichtung von der Quelle. Deren Bedingungen gelten
+unabhängig von der Lizenz dieser App:
 
 | Teil | Lizenz |
 |---|---|
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) und die Whisper-Modelle | MIT |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.2 (in der App) und die Whisper-Modelle | MIT |
+| [FFmpeg](https://ffmpeg.org) 7.1.2 (in der App), nur LGPL-Teile, [Quellcode](https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz), Bauweise in `werkzeuge.sh` | LGPL-2.1 |
+| [uv](https://github.com/astral-sh/uv) 0.12.13 (in der App) | MIT / Apache-2.0 |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 |
 | [pyannote-segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) als ONNX | MIT |
 | [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34 | Apache-2.0 |
 | [mlx-lm](https://github.com/ml-explore/mlx-lm) | MIT |
-| [Gemma 4](https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit) | Gemma Terms of Use — die bestätigst du bei Hugging Face selbst |
-| ffmpeg | LGPL/GPL, je nach Homebrew-Build |
+| [Gemma 4](https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit) | Gemma Terms of Use |
+| Python 3.12 und die Pakete aus `helfer/requirements.txt` | je Paket |
 
 ## Lizenz
 

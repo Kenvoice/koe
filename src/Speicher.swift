@@ -5,8 +5,10 @@ import Foundation
 
 enum Pfade {
     static let basis: URL = {
-        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Koe", isDirectory: true)
+        // KOE_BASIS: anderer Datenordner, etwa um die Einrichtung wie auf einem frischen Mac zu testen.
+        let url = ProcessInfo.processInfo.environment["KOE_BASIS"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Koe", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -22,10 +24,25 @@ enum Pfade {
     static let whisperLarge = modelle.appendingPathComponent("ggml-large-v3.bin")
     static let vad = modelle.appendingPathComponent("ggml-silero-v5.1.2.bin")
     static let sprecherModelle = modelle.appendingPathComponent("sprecher", isDirectory: true)
+    static let segmentierung = sprecherModelle.appendingPathComponent("sherpa-onnx-pyannote-segmentation-3-0/model.onnx")
+    static let stimmen = sprecherModelle.appendingPathComponent("wespeaker_en_voxceleb_resnet34_LM.onnx")
 
-    static let whisperServer = "/opt/homebrew/bin/whisper-server"
-    static let whisperCli = "/opt/homebrew/bin/whisper-cli"
-    static let ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    static let pythonInstallation = basis.appendingPathComponent("python", isDirectory: true)
+
+    /// whisper.cpp, ffmpeg und uv liegen in der App (Resources/bin, gebaut von werkzeuge.sh).
+    /// Fehlt dort eins (Entwickler-Build ohne werkzeuge.sh), nimmt Koe die Fassung aus Homebrew.
+    static func programm(_ name: String) -> String {
+        let eigen = Bundle.main.resourceURL!.appendingPathComponent("bin/\(name)").path
+        return FileManager.default.isExecutableFile(atPath: eigen) ? eigen : "/opt/homebrew/bin/\(name)"
+    }
+    static var whisperServer: String { programm("whisper-server") }
+    static var whisperCli: String { programm("whisper-cli") }
+    static var ffmpeg: String { programm("ffmpeg") }
+    static var uv: String { programm("uv") }
+    /// Für Kindprozesse: erst die eigenen Programme, dann die üblichen Orte.
+    static var suchpfad: String {
+        Bundle.main.resourceURL!.appendingPathComponent("bin").path + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    }
 
     /// Hilfsskripte liegen im App-Bundle (Resources/helfer).
     static var helfer: URL { Bundle.main.resourceURL!.appendingPathComponent("helfer", isDirectory: true) }

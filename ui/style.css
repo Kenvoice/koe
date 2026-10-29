@@ -171,6 +171,7 @@ input:focus-visible { outline: none; }
 .sd-startet { background: var(--cyan); animation: puls 1.2s ease-in-out infinite; }
 .sd-fehlt { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-4); }
 .sd-fehler { background: var(--orange-dark); }
+.sd-ruht { background: var(--ink-4); }
 
 /* ---------- Inhalt ---------- */
 
@@ -704,3 +705,29 @@ mark { background: rgba(34, 211, 238, .3); color: inherit; border-radius: 3px; p
   .app { grid-template-columns: 188px minmax(0, 1fr); }
   .detail-aktionen .suche { margin-left: 0; width: 100%; }
 }
+
+/* ---------- Einrichtung beim ersten Start ---------- */
+
+.app.nur-einrichtung { grid-template-columns: minmax(0, 1fr); }
+.app.nur-einrichtung .nav { display: none; }
+.app.nur-einrichtung .view { max-width: none; }
+.einr { max-width: 600px; margin: 0 auto; padding: 8px 0 8px; }
+.einr-marke { padding: 0 0 18px; }
+.einr .reihe.einr-reihe { min-height: 0; padding: 9px 0; }
+.einr .einr-wahl .reihe { min-height: 0; padding: 11px 0; }
+.einr h1 { font-size: 26px; font-weight: 650; letter-spacing: -.02em; color: var(--ink-1); margin-bottom: 8px; }
+.einr-text { font-size: 14.5px; color: var(--ink-3); margin-bottom: 18px; max-width: 520px; }
+.einr-wahl { margin-bottom: 16px; }
+.einr-reihe .reihe-text { padding-right: 8px; }
+.einr-reihe .recht-status { min-width: 74px; justify-content: flex-end; }
+.balken { height: 6px; margin-top: 9px; border-radius: var(--r-pill); background: var(--surface-3); overflow: hidden; }
+.balken b { display: block; height: 100%; background: var(--blue); border-radius: inherit; transition: width .6s ease; }
+.einr-fehler {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: 0 0 14px; padding: 12px 14px;
+  border-radius: var(--r-sm); background: var(--coral-tint); color: var(--orange-dark); font-size: 13px;
+}
+.einr-fehler svg { margin-top: 1px; }
+.einr-fuss { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 4px 0 16px; }
+.einr-gesamt b { display: block; font-size: 15px; font-weight: 600; color: var(--ink-1); }
+.einr-gesamt span { display: block; font-size: 12.5px; color: var(--ink-3); margin-top: 2px; }

@@ -2,28 +2,39 @@ import Foundation
 
 // Die zwei Hintergrund-Dienste: whisper.cpp (Diktat, Modell bleibt geladen) und Gemma 4 über mlx-lm (Aufräumen).
 // Beide lauschen nur auf 127.0.0.1. Läuft auf dem Port schon ein Dienst (etwa nach einem Absturz), wird er übernommen.
+// Nach längerer Pause ruhen beide: Koe beendet sie und gibt den Speicher frei (zusammen rund 6 GB). Der nächste
+// Tastendruck lädt sie wieder, das erste Diktat danach wartet ein paar Sekunden länger.
 
 struct DienstStatus {
-    var status = "startet"   // bereit | startet | fehlt | fehler | aus
+    var status = "startet"   // bereit | startet | ruht | fehlt | fehler | aus
     var text = ""
     var dict: [String: String] { ["status": status, "text": text] }
 }
 
 final class Dienste {
     static let llmModell = "mlx-community/gemma-4-e4b-it-4bit"
+    /// So lange ohne Diktat, dann ruhen die Dienste.
+    static let ruhezeit: TimeInterval = 5 * 60
 
     var whisper = DienstStatus()
     var llm = DienstStatus()
     var sprecher = DienstStatus()
     var geaendert: () -> Void = {}
+    /// Läuft gerade eine Aufnahme oder Transkription? Dann ruht nichts.
+    var beschaeftigt: () -> Bool = { false }
 
     private var whisperProzess: Process?
     private var llmProzess: Process?
     private var whisperSprache = ""
     private var beendet = false
+    private var letzteNutzung = Date()
+    private var ruheTimer: Timer?
 
     func starten(_ e: Einstellungen) {
         beendet = false
+        letzteNutzung = Date()
+        ruheTimer?.invalidate()
+        ruheTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.ruhenPruefen() }
         sprecherPruefen()
         DispatchQueue.global(qos: .utility).async { _ = Textarbeit.weckAudio() }   // einmal anlegen, liegt dann bereit
         Task { await self.whisperStarten(sprache: e.sprache) }
@@ -44,12 +55,48 @@ final class Dienste {
         }
         if e.aufraeumen, llm.status == "aus" || llm.status == "fehler" {
             Task { await self.llmStarten() }
-        } else if !e.aufraeumen, llmProzess != nil {
+        } else if !e.aufraeumen, llmProzess != nil || llm.status == "ruht" {
             llmProzess?.terminate()
             llmProzess = nil
             llm = DienstStatus(status: "aus", text: "Aufräumen ist ausgeschaltet")
             geaendert()
         }
+    }
+
+    /// Merkt sich, dass Koe gerade gebraucht wird, und lädt ruhende Dienste wieder. Nur vom Haupt-Thread aufrufen.
+    func aufwecken(_ e: Einstellungen) {
+        letzteNutzung = Date()
+        guard !beendet else { return }
+        if whisper.status == "ruht" {
+            whisper = DienstStatus(status: "startet", text: "Modell wird wieder geladen")
+            Task { await self.whisperStarten(sprache: e.sprache) }
+        }
+        if llm.status == "ruht", e.aufraeumen {
+            llm = DienstStatus(status: "startet", text: "Gemma 4 wird wieder geladen")
+            Task { await self.llmStarten() }
+        }
+        geaendert()
+    }
+
+    /// Läuft jede Minute. Nimmt nur Dienste aus dem Speicher, die Koe selbst gestartet hat.
+    private func ruhenPruefen() {
+        guard !beendet, !beschaeftigt(), Date().timeIntervalSince(letzteNutzung) >= Dienste.ruhezeit else { return }
+        var entladen: [String] = []
+        if whisper.status == "bereit", let p = whisperProzess {
+            whisper = DienstStatus(status: "ruht", text: "Ruht nach \(Int(Dienste.ruhezeit / 60)) Min. Pause, lädt beim nächsten Diktat")
+            whisperProzess = nil
+            p.terminate()
+            entladen.append("Spracherkennung")
+        }
+        if llm.status == "bereit", let p = llmProzess {
+            llm = DienstStatus(status: "ruht", text: "Ruht nach \(Int(Dienste.ruhezeit / 60)) Min. Pause, lädt beim nächsten Diktat")
+            llmProzess = nil
+            p.terminate()
+            entladen.append("Gemma")
+        }
+        guard !entladen.isEmpty else { return }
+        protokoll("Ruhe: \(entladen.joined(separator: " und ")) aus dem Speicher genommen")
+        geaendert()
     }
 
     func neustart(_ e: Einstellungen) {
@@ -59,6 +106,8 @@ final class Dienste {
 
     func stoppen() {
         beendet = true
+        ruheTimer?.invalidate()
+        ruheTimer = nil
         whisperProzess?.terminate()
         llmProzess?.terminate()
         whisperProzess = nil
@@ -68,11 +117,10 @@ final class Dienste {
     func sprecherPruefen() {
         let fm = FileManager.default
         let skript = Pfade.helfer.appendingPathComponent("sprecher.py").path
-        let modelle = (try? fm.contentsOfDirectory(atPath: Pfade.sprecherModelle.path)) ?? []
         if !fm.fileExists(atPath: skript) {
             sprecher = DienstStatus(status: "fehlt", text: "Hilfsskript fehlt")
-        } else if modelle.isEmpty {
-            sprecher = DienstStatus(status: "fehlt", text: "Modelle fehlen in Modelle/sprecher")
+        } else if !fm.fileExists(atPath: Pfade.segmentierung.path) || !fm.fileExists(atPath: Pfade.stimmen.path) {
+            sprecher = DienstStatus(status: "fehlt", text: "Modelle fehlen, in den Einstellungen nachladen")
         } else {
             sprecher = DienstStatus(status: "bereit", text: "Sprechertrennung bereit")
         }
@@ -89,11 +137,11 @@ final class Dienste {
             return
         }
         guard FileManager.default.fileExists(atPath: Pfade.whisperServer) else {
-            setzeWhisper("fehlt", "whisper.cpp fehlt (brew install whisper-cpp)")
+            setzeWhisper("fehlt", "whisper.cpp fehlt in der App, bitte neu installieren")
             return
         }
         guard FileManager.default.fileExists(atPath: Pfade.whisperTurbo.path) else {
-            setzeWhisper("fehlt", "Modell large-v3-turbo fehlt")
+            setzeWhisper("fehlt", "Modell fehlt, Koe muss eingerichtet werden")
             return
         }
         setzeWhisper("startet", "Modell wird geladen")
@@ -103,7 +151,7 @@ final class Dienste {
             args += ["--vad", "-vm", Pfade.vad.path]
         }
         whisperProzess = prozess(Pfade.whisperServer, args, log: "whisper-server.log") { [weak self] code in
-            guard let self, !self.beendet else { return }
+            guard let self, !self.beendet, self.whisper.status != "ruht" else { return }
             self.setzeWhisper("fehler", "Dienst beendet (Code \(code))")
         }
         for _ in 0..<120 {
@@ -133,14 +181,14 @@ final class Dienste {
             return
         }
         guard FileManager.default.fileExists(atPath: Pfade.mlxServer.path) else {
-            setzeLlm("fehlt", "mlx-lm fehlt in Koe/llm")
+            setzeLlm("fehlt", "Gemma fehlt, Koe muss eingerichtet werden")
             return
         }
         setzeLlm("startet", "Gemma 4 wird geladen")
         llmProzess = prozess(Pfade.mlxServer.path,
                              ["--model", Dienste.llmModell, "--host", "127.0.0.1", "--port", String(Ports.llm)],
                              log: "llm-server.log", umgebung: ["HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"]) { [weak self] code in
-            guard let self, !self.beendet, self.llm.status != "aus" else { return }
+            guard let self, !self.beendet, self.llm.status != "aus", self.llm.status != "ruht" else { return }
             self.setzeLlm("fehler", "Dienst beendet (Code \(code))")
         }
         for _ in 0..<120 {
@@ -176,7 +224,7 @@ final class Dienste {
         p.executableURL = URL(fileURLWithPath: pfad)
         p.arguments = args
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        env["PATH"] = Pfade.suchpfad
         for (k, v) in umgebung { env[k] = v }
         p.environment = env
         let logUrl = Pfade.logs.appendingPathComponent(log)
