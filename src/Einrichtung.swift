@@ -1,8 +1,9 @@
 import Foundation
 
-// Einrichtung beim ersten Start: lädt die Modelle, legt Python mit den Paketen an und holt Gemma.
-// Das ist der einzige Teil von Koe, der ins Internet geht, und er läuft nur, wenn man auf
-// „Einrichten“ klickt. Danach arbeitet Koe offline. Abgebrochene Downloads laufen beim nächsten Mal weiter.
+// Einrichtung beim ersten Start: lädt die Modelle der gewählten Stufe, legt Python mit den Paketen an und holt Gemma.
+// Das ist der einzige Teil von Koe, der ins Internet geht, und er läuft nur, wenn man auf „Einrichten“ klickt
+// (oder in den Einstellungen die Stufe wechselt). Danach arbeitet Koe offline. Abgebrochene Downloads laufen
+// beim nächsten Mal weiter.
 
 final class Einrichtung: @unchecked Sendable {
     struct Teil {
@@ -20,53 +21,79 @@ final class Einrichtung: @unchecked Sendable {
         }
     }
 
-    static let gemmaModell = Dienste.llmModell
-    private static let hf = "https://huggingface.co"
     private static let sherpa = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 
-    private(set) var teile: [Teil] = [
-        Teil(id: "turbo", name: "Spracherkennung", zweck: "Whisper large-v3-turbo fürs Diktat", gruppe: "diktat", bytes: 1_624_555_275),
-        Teil(id: "silero", name: "Stille-Erkenner", zweck: "Silero, schneidet Pausen weg", gruppe: "diktat", bytes: 885_098),
-        Teil(id: "python", name: "Python und Pakete", zweck: "mlx-lm für Gemma, sherpa-onnx für die Sprecher", gruppe: "diktat", bytes: 450_000_000),
-        Teil(id: "gemma", name: "Gemma 4", zweck: "Räumt den Text auf: Füllwörter, Satzzeichen", gruppe: "diktat", bytes: 5_179_000_000),
-        Teil(id: "large", name: "Große Spracherkennung", zweck: "Whisper large-v3 für Meetings und Dateien", gruppe: "dateien", bytes: 3_095_033_483),
-        Teil(id: "segmentierung", name: "Sprecher erkennen", zweck: "pyannote-Segmentierung", gruppe: "dateien", bytes: 7_000_000),
-        Teil(id: "stimmen", name: "Stimmen unterscheiden", zweck: "WeSpeaker ResNet34", gruppe: "dateien", bytes: 26_530_550),
-    ]
+    /// Die Stufe, mit der Koe gerade arbeitet (aus den Einstellungen). Setzt main.swift.
+    var aktiv: Stufe
+    /// Die Stufe, die geladen wird. Gleich `aktiv`, außer beim Wechsel in den Einstellungen
+    /// und bei der Wahl vor der ersten Einrichtung.
+    private(set) var ziel: Stufe
+    private(set) var teile: [Teil] = []
     private(set) var laeuft = false
     private(set) var fehler = ""
     var geaendert: () -> Void = {}
-    /// Läuft, wenn alles fürs Diktat da ist (nach einer Einrichtung).
+    /// Läuft, wenn alles fürs Diktat da ist (nach einer Einrichtung oder einem Wechsel).
     var fertig: () -> Void = {}
 
     private var prozess: Process?
     private var abgebrochen = false
 
-    init() { pruefen() }
+    init(aktiv: Stufe) {
+        self.aktiv = aktiv
+        ziel = aktiv
+        teile = Einrichtung.teile(fuer: aktiv)
+        pruefen()
+    }
+
+    /// Wählt die Stufe, die geladen werden soll. Nicht während einer laufenden Einrichtung.
+    func zielSetzen(_ s: Stufe) {
+        guard !laeuft else { return }
+        ziel = s
+        fehler = ""
+        teile = Einrichtung.teile(fuer: s)
+        pruefen()
+        geaendert()
+    }
+
+    private static func teile(fuer s: Stufe) -> [Teil] {
+        let klein = s.id == "leicht" ? ", verkleinert" : ""
+        return [
+            Teil(id: "diktat", name: "Spracherkennung", zweck: "Whisper large-v3-turbo\(klein), fürs Diktat", gruppe: "diktat", bytes: s.diktat.bytes),
+            Teil(id: "silero", name: "Stille-Erkenner", zweck: "Silero, schneidet Pausen weg", gruppe: "diktat", bytes: Modelle.vad.bytes),
+            Teil(id: "python", name: "Python und Pakete", zweck: "mlx-lm für Gemma, sherpa-onnx für die Sprecher", gruppe: "diktat", bytes: Modelle.pythonBytes),
+            Teil(id: "gemma", name: s.gemma.name, zweck: "Räumt den Text auf: Füllwörter, Satzzeichen", gruppe: "diktat", bytes: s.gemma.bytes),
+            Teil(id: "dateien", name: "Große Spracherkennung", zweck: "Whisper large-v3\(klein), für Meetings und Dateien", gruppe: "dateien", bytes: s.dateien.bytes),
+            Teil(id: "segmentierung", name: "Sprecher erkennen", zweck: "pyannote-Segmentierung", gruppe: "dateien", bytes: Modelle.segmentierungBytes),
+            Teil(id: "stimmen", name: "Stimmen unterscheiden", zweck: "WeSpeaker ResNet34", gruppe: "dateien", bytes: Modelle.stimmenBytes),
+        ]
+    }
 
     // MARK: Was liegt schon da
 
     var diktatFehlt: Bool { teile.contains { $0.gruppe == "diktat" && $0.status != "fertig" } }
     var dateienFehlen: Bool { teile.contains { $0.gruppe == "dateien" && $0.status != "fertig" } }
 
+    /// Fehlt der aktiven Stufe etwas fürs Diktat? Dann zeigt Koe die Einrichtung statt der App.
+    var aktivFehlt: Bool { ["diktat", "silero", "python", "gemma"].contains { !Einrichtung.vorhanden($0, aktiv) } }
+
     func pruefen() {
         guard !laeuft else { return }
         for i in teile.indices {
-            teile[i].status = vorhanden(teile[i].id) ? "fertig" : "fehlt"
+            teile[i].status = Einrichtung.vorhanden(teile[i].id, ziel) ? "fertig" : "fehlt"
             teile[i].geladen = teile[i].status == "fertig" ? teile[i].bytes : 0
         }
     }
 
-    private func vorhanden(_ id: String) -> Bool {
+    static func vorhanden(_ id: String, _ s: Stufe) -> Bool {
         let fm = FileManager.default
         switch id {
-        case "turbo": return fm.fileExists(atPath: Pfade.whisperTurbo.path)
+        case "diktat": return fm.fileExists(atPath: s.diktat.pfad.path)
         case "silero": return fm.fileExists(atPath: Pfade.vad.path)
-        case "large": return fm.fileExists(atPath: Pfade.whisperLarge.path)
+        case "dateien": return fm.fileExists(atPath: s.dateien.pfad.path)
         case "segmentierung": return fm.fileExists(atPath: Pfade.segmentierung.path)
         case "stimmen": return fm.fileExists(atPath: Pfade.stimmen.path)
         case "python": return Einrichtung.pythonBereit()
-        case "gemma": return Einrichtung.gemmaBereit()
+        case "gemma": return s.gemma.vorhanden
         default: return false
         }
     }
@@ -84,42 +111,58 @@ final class Einrichtung: @unchecked Sendable {
         }
     }
 
-    /// Ordner des Hugging-Face-Caches, in dem mlx-lm Gemma sucht.
-    static var gemmaOrdner: URL {
-        let env = ProcessInfo.processInfo.environment
-        let hub: URL
-        if let h = env["HF_HUB_CACHE"] { hub = URL(fileURLWithPath: h) }
-        else if let h = env["HF_HOME"] { hub = URL(fileURLWithPath: h).appendingPathComponent("hub") }
-        else { hub = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub") }
-        return hub.appendingPathComponent("models--" + gemmaModell.replacingOccurrences(of: "/", with: "--"))
+    /// Modelle anderer Stufen, die noch auf der Platte liegen (etwa nach einem Wechsel).
+    var uebrig: Int64 {
+        Modelle.stufen.filter { $0.id != aktiv.id && $0.id != ziel.id }.reduce(Int64(0)) { summe, s in
+            summe + Einrichtung.groesse(s.diktat.pfad) + Einrichtung.groesse(s.dateien.pfad) + Einrichtung.groesse(s.gemma.ordner)
+        }
     }
 
-    static func gemmaBereit() -> Bool {
-        let fm = FileManager.default
-        // Hugging Face legt die Verknüpfung im Schnappschuss erst an, wenn eine Datei vollständig ist.
-        // Reste abgebrochener Versuche (*.incomplete in blobs) zählen deshalb nicht.
-        guard let schnappschuesse = try? fm.contentsOfDirectory(atPath: gemmaOrdner.appendingPathComponent("snapshots").path) else { return false }
-        return schnappschuesse.contains { s in
-            let ordner = gemmaOrdner.appendingPathComponent("snapshots/\(s)")
-            return ["config.json", "model.safetensors", "tokenizer.json"].allSatisfy { fm.fileExists(atPath: ordner.appendingPathComponent($0).path) }
+    /// Löscht die Modelle der anderen Stufen. Python und die Sprecher-Modelle teilen sich alle Stufen und bleiben.
+    func uebrigeLoeschen() {
+        guard !laeuft else { return }
+        for s in Modelle.stufen where s.id != aktiv.id && s.id != ziel.id {
+            for url in [s.diktat.pfad, s.dateien.pfad, s.gemma.ordner] { try? FileManager.default.removeItem(at: url) }
+            protokoll("Modelle der Stufe \(s.name) gelöscht")
         }
+        geaendert()
+    }
+
+    /// Wie viel für eine Stufe noch zu laden ist. Python, Stille-Erkenner und Sprecher-Modelle teilen sich alle Stufen.
+    func fehlt(_ s: Stufe, mitDateien: Bool) -> Int64 {
+        var teile: [(String, Int64)] = [("diktat", s.diktat.bytes), ("silero", Modelle.vad.bytes),
+                                        ("python", Modelle.pythonBytes), ("gemma", s.gemma.bytes)]
+        if mitDateien {
+            teile += [("dateien", s.dateien.bytes), ("segmentierung", Modelle.segmentierungBytes), ("stimmen", Modelle.stimmenBytes)]
+        }
+        return teile.filter { !Einrichtung.vorhanden($0.0, s) }.reduce(0) { $0 + $1.1 }
     }
 
     var dict: [String: Any] {
         let frei = (try? Pfade.basis.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
             .volumeAvailableCapacityForImportantUsage ?? 0
         return ["teile": teile.map(\.dict), "laeuft": laeuft, "fehler": fehler,
-                "diktatFehlt": diktatFehlt, "dateienFehlen": dateienFehlen, "frei": frei]
+                "diktatFehlt": diktatFehlt, "dateienFehlen": dateienFehlen, "frei": frei,
+                "aktiv": aktiv.id, "ziel": ziel.id, "aktivFehlt": aktivFehlt,
+                "aktivDateien": Einrichtung.vorhanden("dateien", aktiv),
+                "stufen": Modelle.stufen.map { st -> [String: Any] in
+                    var d = st.dict
+                    d["fehltDiktat"] = fehlt(st, mitDateien: false)
+                    d["fehltMitDateien"] = fehlt(st, mitDateien: true)
+                    return d
+                },
+                "empfohlen": Modelle.empfohlen.id,
+                "ram": Modelle.arbeitsspeicherGB, "uebrig": uebrig]
     }
 
     // MARK: Ablauf
 
-    /// Lädt alles, was fehlt. Ohne `mitDateien` nur, was fürs Diktat nötig ist.
+    /// Lädt alles, was der Ziel-Stufe fehlt. Ohne `mitDateien` nur, was fürs Diktat nötig ist.
     func starten(mitDateien: Bool) {
         guard !laeuft else { return }
         pruefen()
         let liste = teile.filter { $0.status != "fertig" && (mitDateien || $0.gruppe == "diktat") }.map(\.id)
-        guard !liste.isEmpty else { geaendert(); return }
+        guard !liste.isEmpty else { geaendert(); fertig(); return }
 
         let noetig = teile.filter { liste.contains($0.id) }.reduce(Int64(0)) { $0 + $1.bytes }
         let frei = (try? Pfade.basis.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
@@ -135,7 +178,7 @@ final class Einrichtung: @unchecked Sendable {
         fehler = ""
         for i in teile.indices where liste.contains(teile[i].id) { teile[i].status = "wartet" }
         geaendert()
-        protokoll("Einrichtung gestartet: \(liste.joined(separator: ", "))")
+        protokoll("Einrichtung gestartet (Stufe \(ziel.name)): \(liste.joined(separator: ", "))")
 
         Task.detached { [self] in
             for id in liste {
@@ -174,12 +217,12 @@ final class Einrichtung: @unchecked Sendable {
     private func ausfuehren(_ id: String) async throws {
         try FileManager.default.createDirectory(at: Pfade.modelle, withIntermediateDirectories: true)
         switch id {
-        case "turbo":
-            try await laden(id, "\(Einrichtung.hf)/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin", nach: Pfade.whisperTurbo)
-        case "large":
-            try await laden(id, "\(Einrichtung.hf)/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin", nach: Pfade.whisperLarge)
+        case "diktat":
+            try await laden(id, ziel.diktat.url, nach: ziel.diktat.pfad)
+        case "dateien":
+            try await laden(id, ziel.dateien.url, nach: ziel.dateien.pfad)
         case "silero":
-            try await laden(id, "\(Einrichtung.hf)/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin", nach: Pfade.vad)
+            try await laden(id, Modelle.vad.url, nach: Pfade.vad)
         case "stimmen":
             try FileManager.default.createDirectory(at: Pfade.sprecherModelle, withIntermediateDirectories: true)
             try await laden(id, "\(Einrichtung.sherpa)/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx", nach: Pfade.stimmen)
@@ -203,7 +246,7 @@ final class Einrichtung: @unchecked Sendable {
     /// Lädt mit curl in eine .teil-Datei und benennt sie erst am Ende um. Liegt schon ein Teil da, geht es dort weiter.
     private func laden(_ id: String, _ url: String, nach ziel: URL) async throws {
         let teil = URL(fileURLWithPath: ziel.path + ".teil")
-        let messer = beobachten(id) { Self.groesse(teil) }
+        let messer = beobachten(id) { Einrichtung.groesse(teil) }
         defer { messer.invalidate() }
         try await starte("/usr/bin/curl", ["-fL", "-C", "-", "--retry", "5", "--retry-delay", "3", "--connect-timeout", "30",
                                            "-o", teil.path, url], text: "Download")
@@ -217,7 +260,7 @@ final class Einrichtung: @unchecked Sendable {
         let cache = Pfade.basis.appendingPathComponent("uv-cache")
         let umgebung = ["UV_PYTHON_INSTALL_DIR": Pfade.pythonInstallation.path, "UV_CACHE_DIR": cache.path,
                         "UV_PYTHON_PREFERENCE": "only-managed", "UV_NO_CONFIG": "1"]
-        let messer = beobachten("python") { Self.groesse(cache) + Self.groesse(Pfade.pythonInstallation) }
+        let messer = beobachten("python") { Einrichtung.groesse(cache) + Einrichtung.groesse(Pfade.pythonInstallation) }
         defer { messer.invalidate() }
         try await starte(Pfade.uv, ["venv", "--clear", "--python", "3.12", llm.path], umgebung: umgebung, text: "Python anlegen")
         let liste = Pfade.helfer.appendingPathComponent("requirements.txt")
@@ -228,16 +271,17 @@ final class Einrichtung: @unchecked Sendable {
         guard Einrichtung.pythonBereit() else { throw fehler("Python ist angelegt, aber mlx-lm oder sherpa-onnx fehlt.") }
     }
 
-    /// Holt Gemma einmal in den Hugging-Face-Cache. Im Betrieb startet Koe den Dienst offline.
+    /// Holt Gemma in genau der festgelegten Fassung in den Hugging-Face-Cache. Im Betrieb startet Koe den Dienst offline.
     private func gemmaLaden() async throws {
-        let messer = beobachten("gemma") { Self.groesse(Einrichtung.gemmaOrdner) }
+        let g = ziel.gemma
+        let messer = beobachten("gemma") { Einrichtung.groesse(g.ordner) }
         defer { messer.invalidate() }
-        let skript = "from huggingface_hub import snapshot_download; snapshot_download('\(Einrichtung.gemmaModell)')"
-        try await starte(Pfade.python.path, ["-I", "-c", skript],
+        let skript = "import sys; from huggingface_hub import snapshot_download; snapshot_download(sys.argv[1], revision=sys.argv[2])"
+        try await starte(Pfade.python.path, ["-I", "-c", skript, g.repo, g.revision],
                          umgebung: ["HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_HUB_DISABLE_TELEMETRY": "1"], text: "Gemma laden")
-        guard Einrichtung.gemmaBereit() else { throw fehler("Gemma ist nicht vollständig angekommen.") }
+        guard g.vorhanden else { throw fehler("Gemma ist nicht vollständig angekommen.") }
         // Reste abgebrochener Versuche belegen sonst Gigabytes.
-        let blobs = Einrichtung.gemmaOrdner.appendingPathComponent("blobs")
+        let blobs = g.ordner.appendingPathComponent("blobs")
         for rest in (try? FileManager.default.contentsOfDirectory(atPath: blobs.path)) ?? [] where rest.hasSuffix(".incomplete") {
             try? FileManager.default.removeItem(at: blobs.appendingPathComponent(rest))
         }

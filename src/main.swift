@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 final class Koe: NSObject, NSApplicationDelegate {
     let speicher = Speicher()
     let dienste = Dienste()
-    let einrichtung = Einrichtung()
+    lazy var einrichtung = Einrichtung(aktiv: Modelle.aktiv(speicher.einstellungen))
     let taste = Taste()
     let mikrofon = Mikrofon()
     let systemton = Systemton()
@@ -63,16 +63,32 @@ final class Koe: NSObject, NSApplicationDelegate {
         bedienungshilfenVorher = AXIsProcessTrusted()
         taste.einrichten()
 
+        // Vor 1.2.0 gab es keine Stufe. Liegen die Modelle einer Stufe schon da, gilt die ab jetzt fest.
+        if speicher.einstellungen.stufe.isEmpty, !einrichtung.aktivFehlt {
+            speicher.einstellungen.stufe = einrichtung.aktiv.id
+            speicher.einstellungenSichern()
+        }
         einrichtung.geaendert = { [weak self] in self?.zustandSenden() }
         einrichtung.fertig = { [weak self] in
             guard let self else { return }
+            let ziel = self.einrichtung.ziel
+            if self.speicher.einstellungen.stufe != ziel.id {
+                // Wechsel der Stufe: Erst jetzt, wo alles fürs Diktat da ist, arbeitet Koe mit den neuen Modellen.
+                let vorher = self.speicher.einstellungen.stufe
+                self.speicher.einstellungen.stufe = ziel.id
+                self.speicher.einstellungenSichern()
+                self.einrichtung.aktiv = ziel
+                protokoll("Stufe gewechselt: \(vorher.isEmpty ? "keine" : vorher) → \(ziel.id)")
+                if !vorher.isEmpty { self.fenster.senden("meldung", ["text": "Koe arbeitet jetzt mit der Stufe \(ziel.name)", "art": "info"]) }
+            }
             self.dienste.neustart(self.speicher.einstellungen)
             self.rechteAnfragen()
+            self.zustandSenden()
         }
         dienste.starten(speicher.einstellungen)
         transkription.wiederaufnehmen()
         // Beim ersten Start zeigt Koe erst die Einrichtung; nach den Rechten fragt es danach.
-        if !einrichtung.diktatFehlt { rechteAnfragen() }
+        if !einrichtung.aktivFehlt { rechteAnfragen() }
 
         // Rechte werden in den Systemeinstellungen erteilt; Koe merkt es von selbst.
         rechteTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -182,7 +198,7 @@ final class Koe: NSObject, NSApplicationDelegate {
                        "bildschirm": CGPreflightScreenCaptureAccess() ? "ja" : "nein"],
             "einstellungen": [
                 "taste": e.taste, "sprache": e.sprache, "aufraeumen": e.aufraeumen, "einfuegen": e.einfuegen,
-                "toene": e.toene, "systemton": e.systemton, "woerter": e.woerter,
+                "toene": e.toene, "systemton": e.systemton, "woerter": e.woerter, "stufe": Modelle.aktiv(e).id,
                 "ersetzungen": e.ersetzungen.map { ["von": $0.von, "nach": $0.nach] },
             ],
             "aufnahme": ["art": aufnahmeArt.map { $0 as Any } ?? NSNull(), "seit": aufnahmeSeit,
@@ -210,7 +226,8 @@ final class Koe: NSObject, NSApplicationDelegate {
             zustandSenden()
         case "einstellungen.speichern":
             if let roh = d["einstellungen"], let daten = try? JSONSerialization.data(withJSONObject: roh),
-               let neu = try? JSONDecoder().decode(Einstellungen.self, from: daten) {
+               var neu = try? JSONDecoder().decode(Einstellungen.self, from: daten) {
+                neu.stufe = speicher.einstellungen.stufe   // die Stufe ändert nur ein Wechsel (stufe.wechseln)
                 speicher.einstellungen = neu
                 speicher.einstellungenSichern()
                 taste.art = neu.taste
@@ -268,7 +285,23 @@ final class Koe: NSObject, NSApplicationDelegate {
         case "ordner.oeffnen":
             NSWorkspace.shared.open(Pfade.basis)
         case "einrichtung.start":
+            if let s = Modelle.stufe(d["stufe"] as? String ?? ""), s.id != einrichtung.ziel.id { einrichtung.zielSetzen(s) }
+            // Erste Einrichtung: Die gewählte Stufe gilt sofort, vorher lief ohnehin nichts.
+            if einrichtung.aktivFehlt, speicher.einstellungen.stufe != einrichtung.ziel.id {
+                speicher.einstellungen.stufe = einrichtung.ziel.id
+                speicher.einstellungenSichern()
+                einrichtung.aktiv = einrichtung.ziel
+            }
             einrichtung.starten(mitDateien: d["mitDateien"] as? Bool ?? true)
+        case "einrichtung.ziel":
+            if let s = Modelle.stufe(d["stufe"] as? String ?? "") { einrichtung.zielSetzen(s) }
+        case "stufe.wechseln":
+            // Lädt die neue Stufe, während die alte weiterläuft. Gewechselt wird in einrichtung.fertig.
+            guard let s = Modelle.stufe(d["stufe"] as? String ?? "") else { return }
+            einrichtung.zielSetzen(s)
+            einrichtung.starten(mitDateien: Einrichtung.vorhanden("dateien", einrichtung.aktiv))
+        case "modelle.aufraeumen":
+            einrichtung.uebrigeLoeschen()
         case "einrichtung.abbrechen":
             einrichtung.abbrechen()
         default:
@@ -358,11 +391,18 @@ final class Koe: NSObject, NSApplicationDelegate {
             gemmaTimer = nil
             guard aufnahmeArt == "diktat" else { return }
             let hoechster = mikrofon.hoechsterPegel
+            let pufferKam = mikrofon.ersterPuffer != nil
             let samples = mikrofon.stoppen()
             aufnahmeArt = nil
             ton("Pop")
             let dauer = Double(samples.count) / 16000
             if dauer < 0.4 || hoechster < 0.12 {
+                // Gehalten vs. aufgenommen: Hält man 10 s und es kommen 0 s an, hat das Mikrofon nichts geliefert.
+                let gehalten = Double(jetztMs() - aufnahmeSeit) / 1000
+                let mikro = AVCaptureDevice.default(for: .audio)?.localizedName ?? "unbekannt"
+                protokoll("Nichts gehört: Taste \(String(format: "%.1f", gehalten)) s, aufgenommen \(String(format: "%.1f", dauer)) s, "
+                          + "lautester Moment \(String(format: "%.2f", hoechster)) (Schwelle 0.12), "
+                          + (pufferKam ? "Ton kam an" : "kein Ton angekommen") + ", Mikrofon „\(mikro)“, \(diktatApp)")
                 pille.zeigen(.hinweis("Nichts gehört"))
                 return
             }
@@ -455,6 +495,8 @@ final class Koe: NSObject, NSApplicationDelegate {
         }
         let erkennung = Date().timeIntervalSince(t0)
         if Textarbeit.istHalluzination(roh) {
+            protokoll("Nichts verstanden: \(String(format: "%.1f", dauer)) s, \(Textarbeit.anzahlWoerter(roh)) Wörter verworfen, \(app)"
+                      + (sprachInfo.isEmpty ? "" : " (\(sprachInfo))"))
             await MainActor.run { pille.zeigen(.hinweis("Nichts verstanden")) }
             return
         }
@@ -683,9 +725,19 @@ extension Koe: NSMenuDelegate {
 
 enum Kommandozeile {
     static func ausfuehren(_ args: [String]) -> Never {
-        if args.first == "einrichten" { einrichten(mitDateien: !args.contains("--nur-diktat")) }
+        if args.first == "einrichten" {
+            var stufe: Stufe?
+            if let i = args.firstIndex(of: "--stufe"), i + 1 < args.count {
+                guard let s = Modelle.stufe(args[i + 1]) else {
+                    FileHandle.standardError.write("Unbekannte Stufe. Möglich: \(Modelle.stufen.map(\.id).joined(separator: ", "))\n".data(using: .utf8)!)
+                    exit(2)
+                }
+                stufe = s
+            }
+            einrichten(mitDateien: !args.contains("--nur-diktat"), stufe: stufe)
+        }
         guard args.count >= 2, args[0] == "datei" else {
-            FileHandle.standardError.write("Aufruf: Koe --cli datei <pfad> [--titel \"…\"]  |  Koe --cli einrichten [--nur-diktat]\n".data(using: .utf8)!)
+            FileHandle.standardError.write("Aufruf: Koe --cli datei <pfad> [--titel \"…\"]  |  Koe --cli einrichten [--nur-diktat] [--stufe leicht|standard]\n".data(using: .utf8)!)
             exit(2)
         }
         let quelle = URL(fileURLWithPath: (args[1] as NSString).expandingTildeInPath)
@@ -732,8 +784,16 @@ enum Kommandozeile {
     }
 
     /// Dieselbe Einrichtung wie im Fenster, Fortschritt auf stderr. Zum Testen und für Skripte.
-    static func einrichten(mitDateien: Bool) -> Never {
-        let e = Einrichtung()
+    static func einrichten(mitDateien: Bool, stufe: Stufe?) -> Never {
+        let speicher = Speicher()
+        let e = Einrichtung(aktiv: stufe ?? Modelle.aktiv(speicher.einstellungen))
+        FileHandle.standardError.write("Stufe \(e.ziel.name), \(Modelle.arbeitsspeicherGB) GB Arbeitsspeicher (empfohlen: \(Modelle.empfohlen.name))\n".data(using: .utf8)!)
+        // Fertig eingerichtet gilt die Stufe auch für die App.
+        e.fertig = {
+            guard speicher.einstellungen.stufe != e.ziel.id else { return }
+            speicher.einstellungen.stufe = e.ziel.id
+            speicher.einstellungenSichern()
+        }
         var letzte = ""
         e.geaendert = {
             let zeile = e.teile.filter { $0.status != "fertig" || $0.geladen > 0 }

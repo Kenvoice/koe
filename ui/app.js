@@ -429,6 +429,7 @@ function viewEinstellungen() {
       </div>`;
     }).join('')}</div>
 
+    ${modelleBlock()}
     ${nachladenBlock()}
 
     <div class="sek-kopf"><h2><i class="punkt cyan"></i>Speicherort</h2></div>
@@ -542,7 +543,7 @@ function viewDetail() {
 /** In den Einstellungen: Meetings und Dateien nachladen, wenn bei der Einrichtung weggelassen. */
 function nachladenBlock() {
   const e = z.einrichtung;
-  if (!e || (!e.dateienFehlen && !e.laeuft && !e.fehler)) return '';
+  if (!e || e.ziel !== e.aktiv || (!e.dateienFehlen && !e.laeuft && !e.fehler)) return '';
   const teile = (e.teile ?? []).filter((t) => t.gruppe === 'dateien');
   const summe = teile.filter((t) => t.status !== 'fertig').reduce((n, t) => n + t.bytes, 0);
   return `<div class="sek-kopf"><h2><i class="punkt"></i>Meetings und Dateien</h2>${
@@ -550,6 +551,60 @@ function nachladenBlock() {
     : e.dateienFehlen ? `<button class="btn btn-primary btn-klein" data-act="einr-nachladen">${ico('speichern', 14)}Nachladen (${fmtGb(summe)})</button>` : ''}</div>
     ${e.fehler ? `<div class="einr-fehler">${ico('warn', 16)}<span>${esc(e.fehler)}</span></div>` : ''}
     ${einrichtungsListe(teile)}`;
+}
+
+const stufeVon = (e, id) => (e.stufen ?? []).find((s) => s.id === id);
+
+/** In den Einstellungen: welche Modelle laufen, Wechsel der Stufe, Aufräumen alter Modelle. */
+function modelleBlock() {
+  const e = z.einrichtung;
+  if (!e?.stufen?.length) return '';
+  const wechsel = e.ziel !== e.aktiv;
+  const aktiv = stufeVon(e, e.aktiv);
+  const ziel = stufeVon(e, e.ziel);
+  const knopf = wechsel
+    ? e.laeuft ? `<button class="btn btn-ghost btn-klein" data-act="einr-abbrechen">Abbrechen</button>`
+      : `<button class="btn btn-ghost btn-klein" data-act="stufe-zurueck">Bei ${esc(aktiv?.name ?? '')} bleiben</button>`
+    : '';
+  const reihen = e.stufen.map((s) => {
+    const n = e.aktivDateien ? s.fehltMitDateien : s.fehltDiktat;
+    let rechts;
+    if (s.id === e.aktiv) rechts = `<span class="recht-status"><i class="sd"></i>Aktiv</span>`;
+    else if (wechsel && s.id === e.ziel) rechts = e.laeuft
+      ? `<span class="recht-status"><i class="sd sd-startet"></i>Wird geladen</span>`
+      : `<button class="btn btn-primary btn-klein" data-act="stufe-wechseln" data-stufe="${esc(s.id)}">Weiter laden</button>`;
+    else rechts = `<button class="btn btn-ghost btn-klein" data-act="stufe-wechseln" data-stufe="${esc(s.id)}"${e.laeuft ? ' disabled' : ''}>Wechseln${n > 0 ? ` (${fmtGb(n)})` : ''}</button>`;
+    return `<div class="reihe">
+      <div class="reihe-text"><b>${esc(s.name)}${s.id === e.empfohlen ? ' <span class="stufe-tipp">Empfohlen</span>' : ''}</b><span>${esc(s.fuer)}. ${esc(s.hinweis)}</span></div>
+      <div class="reihe-rechts">${rechts}</div>
+    </div>`;
+  }).join('');
+  const teile = (e.teile ?? []).filter((t) => t.gruppe === 'diktat' || e.aktivDateien);
+  return `<div class="sek-kopf"><h2><i class="punkt cyan"></i>Modelle</h2>${knopf}</div>
+    <div class="gruppe">
+      <div class="reihe"><div class="reihe-text"><span style="margin:0">Dein Mac hat ${esc(e.ram)} GB Arbeitsspeicher. Jede Stufe ist mit Koe getestet und bleibt auf dieser Fassung, bis eine neue Koe-Version eine andere mitbringt.</span></div></div>
+      ${reihen}
+      ${!wechsel && e.uebrig > 1e6 ? `<div class="reihe">
+        <div class="reihe-text"><b>Modelle der anderen Stufe</b><span>Belegen ${fmtGb(e.uebrig)}, Koe braucht sie gerade nicht.</span></div>
+        <div class="reihe-rechts"><button class="btn btn-ghost btn-klein" data-act="modelle-aufraeumen">Löschen</button></div>
+      </div>` : ''}
+    </div>
+    ${wechsel ? `<p class="stufe-info">Koe arbeitet weiter mit ${esc(aktiv?.name ?? '')}, bis ${esc(ziel?.name ?? '')} vollständig geladen ist, und wechselt dann von selbst.</p>
+      ${e.fehler ? `<div class="einr-fehler">${ico('warn', 16)}<span>${esc(e.fehler)}</span></div>` : ''}
+      ${einrichtungsListe(teile)}` : ''}`;
+}
+
+/** Bei der Einrichtung: die Stufen als Karten, die empfohlene ist vorausgewählt. */
+function stufenWahl(e) {
+  return `<div class="stufen" role="radiogroup" aria-label="Modelle">${e.stufen.map((s) => `
+    <button class="stufe" role="radio" aria-checked="${s.id === e.ziel}" data-act="einr-stufe" data-stufe="${esc(s.id)}">
+      <span class="stufe-kopf"><b>${esc(s.name)}</b>${s.id === e.empfohlen ? '<span class="stufe-tipp">Empfohlen</span>' : ''}</span>
+      <span class="stufe-fuer">${esc(s.fuer)}</span>
+      <span class="stufe-hinweis">${esc(s.hinweis)}</span>
+      <span class="stufe-groesse">${fmtGb(ui.mitDateien ? s.fehltMitDateien : s.fehltDiktat)}</span>
+    </button>`).join('')}
+  </div>
+  <p class="stufen-ram">Dein Mac hat ${esc(e.ram)} GB Arbeitsspeicher. Die Stufe lässt sich später in den Einstellungen wechseln.</p>`;
 }
 
 function fmtGb(bytes) {
@@ -589,9 +644,11 @@ function viewEinrichtung() {
     <h1>Koe einrichten</h1>
     <p class="einr-text">Einmal lädt Koe die Sprachmodelle auf deinen Mac. Danach arbeitet Koe ohne Internet, und nichts, was du sagst, verlässt den Rechner.</p>
 
+    ${e.laeuft || !e.stufen?.length ? '' : stufenWahl(e)}
+
     ${e.laeuft ? '' : dateienOffen ? `<div class="gruppe einr-wahl">
       <div class="reihe">
-        <div class="reihe-text"><b>Auch Meetings und Dateien</b><span>Großes Modell und Sprechertrennung, zusätzlich rund 3,1 GB. Lässt sich später in den Einstellungen nachladen.</span></div>
+        <div class="reihe-text"><b>Auch Meetings und Dateien</b><span>Großes Modell und Sprechertrennung, zusätzlich rund ${fmtGb(stufeVon(e, e.ziel)?.dateienBytes ?? 3.1e9)}. Lässt sich später in den Einstellungen nachladen.</span></div>
         <button class="schalter" role="switch" aria-checked="${ui.mitDateien}" aria-label="Auch Meetings und Dateien" data-act="einr-dateien"></button>
       </div>
     </div>` : ''}
@@ -600,7 +657,7 @@ function viewEinrichtung() {
       ${e.laeuft
         ? `<div class="einr-gesamt"><b>${fmtGb(geladen)} von ${fmtGb(summe)}</b><span>Du kannst Koe dabei offen lassen oder das Fenster schließen. Abgebrochen? Beim nächsten Mal geht es an derselben Stelle weiter.</span></div>
            <button class="btn btn-ghost" data-act="einr-abbrechen">Abbrechen</button>`
-        : `<div class="einr-gesamt"><b>${fmtGb(summe)} laden</b><span>${zuWenig ? `Nur ${fmtGb(e.frei)} frei, das reicht nicht.` : `Frei auf dem Mac: ${fmtGb(e.frei)}. Je nach Internet 10 bis 30 Minuten.`}</span></div>
+        : `<div class="einr-gesamt"><b>${fmtGb(summe)} laden</b><span>${zuWenig ? `Nur ${fmtGb(e.frei)} frei, das reicht nicht.` : `Frei auf dem Mac: ${fmtGb(e.frei)}. Je nach Internet 5 bis 30 Minuten.`}</span></div>
            <button class="btn btn-primary" data-act="einr-start"${zuWenig ? ' disabled' : ''}>${e.fehler ? 'Noch mal versuchen' : 'Einrichten'}</button>`}
     </div>
     ${e.fehler ? `<div class="einr-fehler">${ico('warn', 16)}<span>${esc(e.fehler)}</span></div>` : ''}
@@ -609,7 +666,7 @@ function viewEinrichtung() {
   </div>`;
 }
 
-const einrichtungZeigen = () => !!(z?.einrichtung && (z.einrichtung.diktatFehlt || ui.einrichtungOffen));
+const einrichtungZeigen = () => !!(z?.einrichtung && (z.einrichtung.aktivFehlt || ui.einrichtungOffen));
 
 function renderNav() {
   const aktiv = ui.ansicht === 'detail' ? ui.zurueckZu : ui.ansicht;
@@ -654,7 +711,7 @@ function renderModal() {
     <p>${esc(m.text)}</p>
     <div class="knoepfe">
       <button class="btn btn-ghost" data-key="dlg-abbruch" data-act="modal-abbruch">Abbrechen</button>
-      <button class="btn btn-gefahr" data-act="modal-ok">${esc(m.ok)}</button>
+      <button class="btn ${m.harmlos ? 'btn-primary' : 'btn-gefahr'}" data-act="modal-ok">${esc(m.ok)}</button>
     </div>
   </div></div>`;
 }
@@ -925,7 +982,29 @@ const aktionen = {
 
   // Einrichtung
   'einr-dateien': () => { ui.mitDateien = !ui.mitDateien; render(); },
-  'einr-start': () => { ui.einrichtungOffen = true; senden('einrichtung.start', { mitDateien: ui.mitDateien }); },
+  'einr-start': () => { ui.einrichtungOffen = true; senden('einrichtung.start', { mitDateien: ui.mitDateien, stufe: z.einrichtung?.ziel }); },
+  'einr-stufe': (el) => senden('einrichtung.ziel', { stufe: el.dataset.stufe }),
+  'stufe-zurueck': () => senden('einrichtung.ziel', { stufe: z.einrichtung?.aktiv }),
+  'stufe-wechseln': (el) => {
+    const e = z.einrichtung;
+    const s = stufeVon(e, el.dataset.stufe);
+    if (!s) return;
+    const n = e.aktivDateien ? s.fehltMitDateien : s.fehltDiktat;
+    if (n <= 0 || e.ziel === s.id) return senden('stufe.wechseln', { stufe: s.id });
+    frage({
+      titel: `Zur Stufe ${s.name} wechseln?`,
+      text: `Koe lädt dafür rund ${fmtGb(n)}. Bis alles da ist, arbeitet Koe weiter mit ${stufeVon(e, e.aktiv)?.name ?? 'der jetzigen Stufe'}. Die alten Modelle kannst du danach löschen.`,
+      ok: 'Laden und wechseln',
+      harmlos: true,
+      aktion: () => senden('stufe.wechseln', { stufe: s.id }),
+    });
+  },
+  'modelle-aufraeumen': () => frage({
+    titel: 'Modelle der anderen Stufe löschen?',
+    text: `Gibt ${fmtGb(z.einrichtung?.uebrig)} frei. Wechselst du später zurück, lädt Koe sie neu.`,
+    ok: 'Löschen',
+    aktion: () => senden('modelle.aufraeumen'),
+  }),
   'einr-abbrechen': () => senden('einrichtung.abbrechen'),
   'einr-nachladen': () => senden('einrichtung.start', { mitDateien: true }),
 
@@ -988,9 +1067,9 @@ window.koe = {
     z = neu;
     // Die Einrichtungsansicht bleibt offen, solange sie läuft oder ein Fehler zu lesen ist.
     const e = z.einrichtung;
-    if (ui.einrichtungOffen && e && !e.laeuft && !e.diktatFehlt && !e.fehler) {
+    if (ui.einrichtungOffen && e && !e.laeuft && !e.aktivFehlt && !e.fehler) {
       ui.einrichtungOffen = false;
-      if (alt?.einrichtung?.diktatFehlt) toast('Koe ist eingerichtet.', 'info');
+      if (alt?.einrichtung?.aktivFehlt) toast('Koe ist eingerichtet.', 'info');
     }
     if (z.aufnahme?.art !== 'meeting') ui.pegel = { mikro: 0, system: 0 };
     if (ui.ansicht === 'detail') {
@@ -1120,43 +1199,84 @@ function startMock() {
       { id: 't6', titel: 'Rückruf Lieferant.mp4', zeit: jetzt - 3 * TAG, dauer: 410, quelle: 'datei', status: 'fertig', schritt: '', fortschritt: 1, fehler: '', woerter: 982, sprecher: ['ich', 's1'] },
     ],
     speicherort: '~/Library/Application Support/Koe',
-    einrichtung: {
-      laeuft: false, fehler: '', frei: 182e9,
-      teile: [
-        ['turbo', 'Spracherkennung', 'Whisper large-v3-turbo fürs Diktat', 'diktat', 1624555275],
-        ['silero', 'Stille-Erkenner', 'Silero, schneidet Pausen weg', 'diktat', 885098],
-        ['python', 'Python und Pakete', 'mlx-lm für Gemma, sherpa-onnx für die Sprecher', 'diktat', 450e6],
-        ['gemma', 'Gemma 4', 'Räumt den Text auf: Füllwörter, Satzzeichen', 'diktat', 5179e6],
-        ['large', 'Große Spracherkennung', 'Whisper large-v3 für Meetings und Dateien', 'dateien', 3095033483],
-        ['segmentierung', 'Sprecher erkennen', 'pyannote-Segmentierung', 'dateien', 7e6],
-        ['stimmen', 'Stimmen unterscheiden', 'WeSpeaker ResNet34', 'dateien', 26530550],
-      ].map(([id, name, zweck, gruppe, bytes]) => ({ id, name, zweck, gruppe, bytes, status: 'fertig', geladen: bytes })),
-    },
+    einrichtung: { laeuft: false, fehler: '', frei: 182e9, ram: 16, aktiv: 'standard', ziel: 'standard', empfohlen: 'standard' },
   };
-  // index.html#einrichtung zeigt den ersten Start, #nachladen die Einstellungen ohne Meetings-Modelle.
+  // index.html#einrichtung zeigt den ersten Start (#einrichtung-8gb auf einem Mac mit 8 GB),
+  // #nachladen die Einstellungen ohne Meetings-Modelle, #wechsel die Einstellungen mit beiden Stufen.
   const mzE = mz.einrichtung;
+  const MST = {
+    leicht: { name: 'Leicht', fuer: 'Für Macs mit 8 GB Arbeitsspeicher', hinweis: 'Kleinere Modelle. Selbstkorrekturen erkennt das Aufräumen etwas seltener.', diktat: 574041195, gemma: ['Gemma 4 E2B', 3583088661], dateien: 1081140203 },
+    standard: { name: 'Standard', fuer: 'Für Macs mit 16 GB oder mehr', hinweis: 'Die Modelle, mit denen Koe entwickelt wurde.', diktat: 1624555275, gemma: ['Gemma 4 E4B', 5179241512], dateien: 3095033483 },
+  };
+  const GETEILT = { silero: 885098, python: 450e6, segmentierung: 7e6, stimmen: 26530550 };
+  const da = new Set(['standard:diktat', 'standard:gemma', 'standard:dateien', 'silero', 'python', 'segmentierung', 'stimmen']);
+  const schl = (sid, id) => (['diktat', 'gemma', 'dateien'].includes(id) ? `${sid}:${id}` : id);
+  const mTeile = (sid) => {
+    const st = MST[sid];
+    const klein = sid === 'leicht' ? ', verkleinert' : '';
+    return [
+      ['diktat', 'Spracherkennung', `Whisper large-v3-turbo${klein}, fürs Diktat`, 'diktat', st.diktat],
+      ['silero', 'Stille-Erkenner', 'Silero, schneidet Pausen weg', 'diktat', GETEILT.silero],
+      ['python', 'Python und Pakete', 'mlx-lm für Gemma, sherpa-onnx für die Sprecher', 'diktat', GETEILT.python],
+      ['gemma', st.gemma[0], 'Räumt den Text auf: Füllwörter, Satzzeichen', 'diktat', st.gemma[1]],
+      ['dateien', 'Große Spracherkennung', `Whisper large-v3${klein}, für Meetings und Dateien`, 'dateien', st.dateien],
+      ['segmentierung', 'Sprecher erkennen', 'pyannote-Segmentierung', 'dateien', GETEILT.segmentierung],
+      ['stimmen', 'Stimmen unterscheiden', 'WeSpeaker ResNet34', 'dateien', GETEILT.stimmen],
+    ].map(([id, name, zweck, gruppe, bytes]) => {
+      const ok = da.has(schl(sid, id));
+      return { id, name, zweck, gruppe, bytes, status: ok ? 'fertig' : 'fehlt', geladen: ok ? bytes : 0 };
+    });
+  };
   const neuBerechnen = () => {
+    if (!mzE.laeuft) mzE.teile = mTeile(mzE.ziel);
     mzE.diktatFehlt = mzE.teile.some((t) => t.gruppe === 'diktat' && t.status !== 'fertig');
     mzE.dateienFehlen = mzE.teile.some((t) => t.gruppe === 'dateien' && t.status !== 'fertig');
+    mzE.aktivFehlt = ['diktat', 'silero', 'python', 'gemma'].some((id) => !da.has(schl(mzE.aktiv, id)));
+    mzE.aktivDateien = da.has(schl(mzE.aktiv, 'dateien'));
+    mzE.stufen = Object.keys(MST).map((sid) => {
+      const t = mTeile(sid);
+      const fehlt = (mit) => t.filter((x) => (mit || x.gruppe === 'diktat') && x.status !== 'fertig').reduce((n, x) => n + x.bytes, 0);
+      const sum = (g) => t.filter((x) => x.gruppe === g).reduce((n, x) => n + x.bytes, 0);
+      return { id: sid, name: MST[sid].name, fuer: MST[sid].fuer, hinweis: MST[sid].hinweis,
+        diktatBytes: sum('diktat'), dateienBytes: sum('dateien'), fehltDiktat: fehlt(false), fehltMitDateien: fehlt(true) };
+    });
+    mzE.uebrig = Object.keys(MST).filter((sid) => sid !== mzE.aktiv && sid !== mzE.ziel)
+      .reduce((n, sid) => n + ['diktat', 'gemma', 'dateien'].reduce((m, id) => m + (da.has(`${sid}:${id}`) ? (id === 'gemma' ? MST[sid].gemma[1] : MST[sid][id]) : 0), 0), 0);
+    mz.einstellungen.stufe = mzE.aktiv;
   };
-  if (location.hash === '#einrichtung') mzE.teile.forEach((t) => { t.status = 'fehlt'; t.geladen = 0; });
+  if (location.hash.startsWith('#einrichtung')) {
+    da.clear();
+    if (location.hash === '#einrichtung-8gb') { mzE.ram = 8; mzE.empfohlen = mzE.aktiv = mzE.ziel = 'leicht'; }
+  }
   if (location.hash === '#nachladen') {
-    mzE.teile.filter((t) => t.gruppe === 'dateien').forEach((t) => { t.status = 'fehlt'; t.geladen = 0; });
+    ['standard:dateien', 'segmentierung', 'stimmen'].forEach((k) => da.delete(k));
+    ui.ansicht = 'einstellungen';
+  }
+  if (location.hash === '#wechsel') {
+    ['leicht:diktat', 'leicht:gemma'].forEach((k) => da.add(k));
     ui.ansicht = 'einstellungen';
   }
   neuBerechnen();
   let einrTimer = null;
   function einrSimulieren(mitDateien) {
+    neuBerechnen();
     mzE.laeuft = true;
     const liste = mzE.teile.filter((t) => t.status !== 'fertig' && (mitDateien || t.gruppe === 'diktat'));
     liste.forEach((t) => { t.status = 'wartet'; });
     einrTimer = setInterval(() => {
       const t = liste.find((x) => x.status !== 'fertig');
-      if (!t) { clearInterval(einrTimer); mzE.laeuft = false; neuBerechnen(); push(); return; }
+      if (!t) {
+        clearInterval(einrTimer);
+        mzE.laeuft = false;
+        if (mzE.ziel !== mzE.aktiv) { mzE.aktiv = mzE.ziel; window.koe.meldung({ text: `Koe arbeitet jetzt mit der Stufe ${MST[mzE.aktiv].name}`, art: 'info' }); }
+        neuBerechnen();
+        push();
+        return;
+      }
       t.status = 'laeuft';
       t.geladen = Math.min(t.bytes, t.geladen + Math.max(t.bytes / 6, 1));
-      if (t.geladen >= t.bytes) t.status = 'fertig';
-      neuBerechnen();
+      if (t.geladen >= t.bytes) { t.status = 'fertig'; da.add(schl(mzE.ziel, t.id)); }
+      mzE.diktatFehlt = mzE.teile.some((x) => x.gruppe === 'diktat' && x.status !== 'fertig');
       push();
     }, 400);
   }
@@ -1272,7 +1392,21 @@ function startMock() {
         setTimeout(() => { for (const k of Object.keys(mz.dienste)) mz.dienste[k].status = 'bereit'; push(); }, 2500);
         break;
       case 'einrichtung.start':
+        if (d.stufe) mzE.ziel = d.stufe;
+        if (mzE.aktivFehlt) mzE.aktiv = mzE.ziel;
         einrSimulieren(d.mitDateien);
+        break;
+      case 'einrichtung.ziel':
+        if (!mzE.laeuft) { mzE.ziel = d.stufe; mzE.fehler = ''; neuBerechnen(); push(); }
+        break;
+      case 'stufe.wechseln':
+        mzE.ziel = d.stufe;
+        einrSimulieren(mzE.aktivDateien);
+        break;
+      case 'modelle.aufraeumen':
+        Object.keys(MST).filter((sid) => sid !== mzE.aktiv).forEach((sid) => ['diktat', 'gemma', 'dateien'].forEach((id) => da.delete(`${sid}:${id}`)));
+        neuBerechnen();
+        push();
         break;
       case 'einrichtung.abbrechen':
         clearInterval(einrTimer);

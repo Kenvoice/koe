@@ -34,7 +34,8 @@ Was auf der Platte liegt, liegt unter `~/Library/Application Support/Koe/`:
 | `Modelle/`, `llm/`, `python/` | die Modelle, die Python-Umgebung und Python selbst |
 
 Gemma liegt dort, wo Hugging Face Modelle ablegt:
-`~/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit`.
+`~/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit` (Stufe
+Standard) bzw. `…gemma-4-e2b-it-4bit` (Stufe Leicht).
 
 Diktate und Transkripte stehen also im Klartext in deinem Benutzerordner. Wer
 mit sensiblen Aufnahmen arbeitet, sollte die Platte verschlüsseln (FileVault)
@@ -48,8 +49,9 @@ mitlesen — Koe tut es nicht, und der Code dafür steht in `src/Taste.swift` un
 ## Das brauchst du
 
 - Mac mit Apple-Chip (M1 oder neuer), macOS 14 oder neuer
-- 16 GB Arbeitsspeicher empfohlen, die Modelle belegen zusammen rund 6,5 GB
-- Rund 14 GB freier Platz für die Modelle
+- 8 GB Arbeitsspeicher reichen für die Stufe Leicht, ab 16 GB läuft die Stufe
+  Standard (siehe [Stufen](#stufen))
+- Freier Platz für die Modelle: rund 8 GB (Leicht) bzw. 13 GB (Standard)
 
 Sonst nichts. Kein Terminal, kein Homebrew, kein Python vorher.
 
@@ -62,11 +64,12 @@ Sonst nichts. Kein Terminal, kein Homebrew, kein Python vorher.
    Koe ist nicht bei Apple beglaubigt, das kostet eine Jahresgebühr. Öffne dann
    **Systemeinstellungen → Datenschutz & Sicherheit**, scroll nach unten und
    klick bei Koe auf **Dennoch öffnen**. Das ist nur einmal nötig.
-4. Koe zeigt **Koe einrichten**. Klick auf **Einrichten**. Koe lädt jetzt rund
-   10 GB, je nach Internet 10 bis 30 Minuten. Brauchst du nur das Diktat, schalte
-   „Auch Meetings und Dateien“ aus, das spart 3,1 GB. Nachladen geht später
-   in den Einstellungen. Bricht der Download ab, klick noch mal: Es geht an
-   derselben Stelle weiter.
+4. Koe zeigt **Koe einrichten** mit zwei Stufen, die zu deinem Mac passende
+   ist vorausgewählt. Klick auf **Einrichten**. Koe lädt jetzt rund 6 GB (Leicht)
+   bzw. 10 GB (Standard), je nach Internet 5 bis 30 Minuten. Brauchst du nur das
+   Diktat, schalte „Auch Meetings und Dateien“ aus, das spart 1,1 bzw. 3,1 GB.
+   Nachladen geht später in den Einstellungen. Bricht der Download ab, klick
+   noch mal: Es geht an derselben Stelle weiter.
 5. Erlaube in **Systemeinstellungen → Datenschutz & Sicherheit**:
    - **Mikrofon** für Diktat und Meetings
    - **Bedienungshilfen**, damit Koe den Text einfügt
@@ -84,7 +87,9 @@ erkennt eine neue Fassung ohne Apple-Beglaubigung als neue App.
 1. Koe beenden und aus Programme löschen.
 2. `~/Library/Application Support/Koe` löschen. Darin liegen auch deine
    Diktate und Transkripte. Was du behalten willst, vorher sichern.
-3. Gemma löschen: `~/.cache/huggingface/hub/models--mlx-community--gemma-4-e4b-it-4bit`
+3. Gemma löschen: in `~/.cache/huggingface/hub/` die Ordner
+   `models--mlx-community--gemma-4-e4b-it-4bit` und
+   `models--mlx-community--gemma-4-e2b-it-4bit`, je nachdem, was da ist
 
 Im Finder kommst du mit ⇧⌘G und dem Pfad direkt in diese Ordner.
 
@@ -151,14 +156,36 @@ Fassung. Übersetzt wird nichts, und ein Diktat wie „schreib eine Mail“ wird
 nicht als Auftrag ausgeführt.
 
 Nach 5 Minuten ohne Diktat nimmt Koe beide Modelle aus dem Speicher und gibt
-rund 6 GB frei. Der nächste Tastendruck lädt sie wieder, du kannst sofort
+rund 4 GB (Leicht) bzw. 6,5 GB (Standard) frei. Der nächste Tastendruck lädt sie wieder, du kannst sofort
 sprechen; das erste Diktat danach braucht ein paar Sekunden länger. Während
 Meetings und Transkriptionen ruht nichts.
 
 Zeiten pro Diktat stehen in `Logs/koe.log`, Diktattexte nicht.
 
+### Stufen
+
+Koe lädt die Modelle in einer von zwei Stufen. Bei der Einrichtung ist die
+vorausgewählt, die zum Arbeitsspeicher deines Macs passt. Wechseln geht in den
+Einstellungen unter **Modelle**: Koe lädt die neue Stufe, arbeitet so lange mit
+der alten weiter und stellt dann selbst um. Die alten Modelle lassen sich
+danach mit einem Klick löschen.
+
+| Stufe | Für | Diktat | Aufräumen | Meetings und Dateien | Download |
+|---|---|---|---|---|---|
+| Leicht | 8 GB | Whisper large-v3-turbo, verkleinert (q5_0) | Gemma 4 E2B | Whisper large-v3, verkleinert (q5_0) | rund 6 GB |
+| Standard | ab 16 GB | Whisper large-v3-turbo | Gemma 4 E4B | Whisper large-v3 | rund 10 GB |
+
+Leicht erkennt Selbstkorrekturen („bis morgen, nein, bis Freitag“) etwas
+seltener als Standard.
+
+Jede Stufe ist auf eine feste Fassung der Modelle festgelegt (in
+`src/Modelle.swift`). Ändern die Anbieter ihre Modelle, bekommst du trotzdem
+genau das, was mit Koe getestet ist. Neue Modelle kommen mit einer neuen
+Koe-Version.
+
 ### Einstellungen
 
+- **Modelle** — Stufe wechseln, Modelle der anderen Stufe löschen.
 - **Wörterbuch** — Eigennamen, die Whisper kennen soll.
 - **Ersetzungen** — laufen nach der Erkennung. Whisper hört „Claude“
   verlässlich als „Cloud“; solche Fälle löst die Liste.
@@ -169,7 +196,8 @@ Zeiten pro Diktat stehen in `Logs/koe.log`, Diktattexte nicht.
 ## Aufbau
 
 ```
-src/           Swift, ein Build ohne Xcode-Projekt (build.sh ruft swiftc auf)
+src/           Swift, ein Build ohne Xcode-Projekt (build.sh ruft swiftc auf);
+               welche Modelle in welcher Fassung: src/Modelle.swift
 ui/            die Oberfläche als HTML in einem WebView, offline
 helfer/        sprecher.py für die Sprechertrennung, requirements.txt mit den Python-Paketen
 werkzeuge.sh   baut whisper.cpp und ffmpeg, holt uv
@@ -195,15 +223,15 @@ unabhängig von der Lizenz dieser App:
 
 | Teil | Lizenz |
 |---|---|
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.2 (in der App) und die Whisper-Modelle | MIT |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 1.9.2 (in der App) und die [Whisper-Modelle](https://huggingface.co/ggerganov/whisper.cpp) | MIT |
 | [FFmpeg](https://ffmpeg.org) 7.1.2 (in der App), nur LGPL-Teile, [Quellcode](https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz), Bauweise in `werkzeuge.sh` | LGPL-2.1 |
 | [uv](https://github.com/astral-sh/uv) 0.12.13 (in der App) | MIT / Apache-2.0 |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Apache-2.0 |
 | [pyannote-segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) als ONNX | MIT |
-| [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34 | Apache-2.0 |
+| [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34, trainiert auf VoxCeleb ([Modell](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM)) | CC BY 4.0 |
 | [mlx-lm](https://github.com/ml-explore/mlx-lm) | MIT |
-| [Gemma 4](https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit) | Gemma Terms of Use |
+| Gemma 4 [E4B](https://huggingface.co/mlx-community/gemma-4-e4b-it-4bit) und [E2B](https://huggingface.co/mlx-community/gemma-4-e2b-it-4bit) | Gemma Terms of Use |
 | Python 3.12 und die Pakete aus `helfer/requirements.txt` | je Paket |
 
 ## Lizenz

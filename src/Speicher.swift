@@ -20,8 +20,7 @@ enum Pfade {
     static let einstellungen = basis.appendingPathComponent("einstellungen.json")
     static let diktate = basis.appendingPathComponent("diktate.json")
 
-    static let whisperTurbo = modelle.appendingPathComponent("ggml-large-v3-turbo.bin")
-    static let whisperLarge = modelle.appendingPathComponent("ggml-large-v3.bin")
+    // Die Whisper-Modelle hängen an der Stufe, siehe Modelle.swift.
     static let vad = modelle.appendingPathComponent("ggml-silero-v5.1.2.bin")
     static let sprecherModelle = modelle.appendingPathComponent("sprecher", isDirectory: true)
     static let segmentierung = sprecherModelle.appendingPathComponent("sherpa-onnx-pyannote-segmentation-3-0/model.onnx")
@@ -76,6 +75,8 @@ struct Einstellungen: Codable {
     var einfuegen = true
     var toene = true
     var systemton = true
+    /// Modell-Stufe, "leicht" oder "standard" (Modelle.swift). Leer: noch nicht gewählt.
+    var stufe = ""
     /// Eigennamen, die Whisper kennen soll, und Ersetzungen danach — beides
     /// füllt jeder selbst in den Einstellungen. Was hier stünde, bekäme jeder
     /// Nutzer in sein Wörterbuch, deshalb leer. Beispiele stehen in der README.
@@ -94,6 +95,7 @@ struct Einstellungen: Codable {
         einfuegen = (try? c.decode(Bool.self, forKey: .einfuegen)) ?? s.einfuegen
         toene = (try? c.decode(Bool.self, forKey: .toene)) ?? s.toene
         systemton = (try? c.decode(Bool.self, forKey: .systemton)) ?? s.systemton
+        stufe = (try? c.decode(String.self, forKey: .stufe)) ?? s.stufe
         woerter = (try? c.decode([String].self, forKey: .woerter)) ?? s.woerter
         ersetzungen = (try? c.decode([Ersetzung].self, forKey: .ersetzungen)) ?? s.ersetzungen
     }

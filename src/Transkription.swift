@@ -75,7 +75,7 @@ final class Transkription {
         guard let meta = await MainActor.run(body: { speicher.meta(id) }) else { return }
         let ordner = speicher.ordner(id)
         let e = await MainActor.run { speicher.einstellungen }
-        guard FileManager.default.fileExists(atPath: Pfade.whisperLarge.path) else {
+        guard FileManager.default.fileExists(atPath: Modelle.aktiv(e).dateien.pfad.path) else {
             throw fehler("Für Meetings und Dateien fehlt noch das große Modell. Einstellungen → Meetings und Dateien → Nachladen.")
         }
         var segmente: [Segment] = []
@@ -220,7 +220,7 @@ final class Transkription {
     private func whisperLauf(_ id: String, _ audio: URL, _ e: Einstellungen, von: Double, bis: Double, text: String, ohneKontext: Bool) async throws -> [Teil] {
         schritt(id, text, von)
         let basis = audio.deletingPathExtension().path + ".whisper"
-        var args = ["-m", Pfade.whisperLarge.path, "-l", e.sprache == "auto" ? "auto" : e.sprache, "-t", "8",
+        var args = ["-m", Modelle.aktiv(e).dateien.pfad.path, "-l", e.sprache == "auto" ? "auto" : e.sprache, "-t", "8",
                     "-ml", "1", "-sow", "-oj", "-of", basis, "-pp", "-f", audio.path]
         if ohneKontext { args += ["-mc", "0"] }
         if FileManager.default.fileExists(atPath: Pfade.vad.path) { args += ["--vad", "-vm", Pfade.vad.path] }

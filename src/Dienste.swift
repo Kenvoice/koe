@@ -12,7 +12,6 @@ struct DienstStatus {
 }
 
 final class Dienste {
-    static let llmModell = "mlx-community/gemma-4-e4b-it-4bit"
     /// So lange ohne Diktat, dann ruhen die Dienste.
     static let ruhezeit: TimeInterval = 5 * 60
 
@@ -26,12 +25,15 @@ final class Dienste {
     private var whisperProzess: Process?
     private var llmProzess: Process?
     private var whisperSprache = ""
+    /// Die Modelle, mit denen die Dienste laufen (Modelle.swift).
+    private(set) var stufe = Modelle.standard
     private var beendet = false
     private var letzteNutzung = Date()
     private var ruheTimer: Timer?
 
     func starten(_ e: Einstellungen) {
         beendet = false
+        stufe = Modelle.aktiv(e)
         letzteNutzung = Date()
         ruheTimer?.invalidate()
         ruheTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.ruhenPruefen() }
@@ -72,7 +74,7 @@ final class Dienste {
             Task { await self.whisperStarten(sprache: e.sprache) }
         }
         if llm.status == "ruht", e.aufraeumen {
-            llm = DienstStatus(status: "startet", text: "Gemma 4 wird wieder geladen")
+            llm = DienstStatus(status: "startet", text: "\(stufe.gemma.name) wird wieder geladen")
             Task { await self.llmStarten() }
         }
         geaendert()
@@ -99,9 +101,18 @@ final class Dienste {
         geaendert()
     }
 
+    /// Beendet beide Dienste und startet sie neu, etwa nach einem Wechsel der Stufe. Wartet, bis die alten
+    /// Prozesse wirklich weg sind: Sonst fände der Neustart den alten Dienst noch auf dem Port und übernähme ihn.
     func neustart(_ e: Einstellungen) {
+        let alte = [whisperProzess, llmProzess].compactMap { $0 }
         stoppen()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.starten(e) }
+        Task {
+            for _ in 0..<50 where alte.contains(where: { $0.isRunning }) {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await MainActor.run { self.starten(e) }
+        }
     }
 
     func stoppen() {
@@ -133,19 +144,19 @@ final class Dienste {
         whisperSprache = sprache
         let adresse = "http://127.0.0.1:\(Ports.whisper)/"
         if await HTTP.erreichbar(adresse) {
-            setzeWhisper("bereit", "large-v3-turbo geladen")
+            setzeWhisper("bereit", "Whisper geladen, Stufe \(stufe.name)")
             return
         }
         guard FileManager.default.fileExists(atPath: Pfade.whisperServer) else {
             setzeWhisper("fehlt", "whisper.cpp fehlt in der App, bitte neu installieren")
             return
         }
-        guard FileManager.default.fileExists(atPath: Pfade.whisperTurbo.path) else {
+        guard FileManager.default.fileExists(atPath: stufe.diktat.pfad.path) else {
             setzeWhisper("fehlt", "Modell fehlt, Koe muss eingerichtet werden")
             return
         }
         setzeWhisper("startet", "Modell wird geladen")
-        var args = ["-m", Pfade.whisperTurbo.path, "-l", sprache == "auto" ? "auto" : sprache,
+        var args = ["-m", stufe.diktat.pfad.path, "-l", sprache == "auto" ? "auto" : sprache,
                     "--host", "127.0.0.1", "--port", String(Ports.whisper), "-t", "8"]
         if FileManager.default.fileExists(atPath: Pfade.vad.path) {
             args += ["--vad", "-vm", Pfade.vad.path]
@@ -157,7 +168,7 @@ final class Dienste {
         for _ in 0..<120 {
             try? await Task.sleep(nanoseconds: 500_000_000)
             if await HTTP.erreichbar(adresse) {
-                setzeWhisper("bereit", "large-v3-turbo geladen")
+                setzeWhisper("bereit", "Whisper geladen, Stufe \(stufe.name)")
                 return
             }
             if whisperProzess?.isRunning == false { return }
@@ -184,9 +195,14 @@ final class Dienste {
             setzeLlm("fehlt", "Gemma fehlt, Koe muss eingerichtet werden")
             return
         }
-        setzeLlm("startet", "Gemma 4 wird geladen")
+        guard stufe.gemma.vorhanden else {
+            setzeLlm("fehlt", "\(stufe.gemma.name) fehlt, Koe muss eingerichtet werden")
+            return
+        }
+        setzeLlm("startet", "\(stufe.gemma.name) wird geladen")
+        // Der Ordner der festgelegten Fassung statt des Namens: So lädt der Dienst genau diese Fassung.
         llmProzess = prozess(Pfade.mlxServer.path,
-                             ["--model", Dienste.llmModell, "--host", "127.0.0.1", "--port", String(Ports.llm)],
+                             ["--model", stufe.gemma.schnappschuss.path, "--host", "127.0.0.1", "--port", String(Ports.llm)],
                              log: "llm-server.log", umgebung: ["HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"]) { [weak self] code in
             guard let self, !self.beendet, self.llm.status != "aus", self.llm.status != "ruht" else { return }
             self.setzeLlm("fehler", "Dienst beendet (Code \(code))")
@@ -204,9 +220,9 @@ final class Dienste {
 
     /// Die erste Anfrage lädt das Modell in den Speicher (rund 7 s). Das passiert hier statt beim ersten Diktat.
     private func vorwaermen() async {
-        setzeLlm("startet", "Gemma 4 wird vorgeladen")
+        setzeLlm("startet", "\(stufe.gemma.name) wird vorgeladen")
         _ = await Textarbeit.aufraeumen("ähm das ist ein test", woerter: [], timeout: 60)
-        setzeLlm("bereit", "Gemma 4 geladen")
+        setzeLlm("bereit", "\(stufe.gemma.name) geladen")
     }
 
     private func setzeLlm(_ s: String, _ t: String) {

@@ -22,7 +22,7 @@ xcrun swiftc -O -swift-version 5 -module-cache-path "$SWIFT_MODULECACHE_PATH" \
   -target arm64-apple-macos14.0 \
   -framework Cocoa -framework WebKit -framework AVFoundation -framework ScreenCaptureKit \
   -framework CoreMedia -framework UniformTypeIdentifiers \
-  "$APP_DIR/src/Speicher.swift" "$APP_DIR/src/Text.swift" "$APP_DIR/src/Dienste.swift" "$APP_DIR/src/Einrichtung.swift" \
+  "$APP_DIR/src/Speicher.swift" "$APP_DIR/src/Modelle.swift" "$APP_DIR/src/Text.swift" "$APP_DIR/src/Dienste.swift" "$APP_DIR/src/Einrichtung.swift" \
   "$APP_DIR/src/Audio.swift" "$APP_DIR/src/Taste.swift" "$APP_DIR/src/Pille.swift" \
   "$APP_DIR/src/Transkription.swift" "$APP_DIR/src/Fenster.swift" "$APP_DIR/src/main.swift" \
   -o "$BUNDLE/Contents/MacOS/Koe"

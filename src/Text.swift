@@ -26,17 +26,39 @@ enum Textarbeit {
     }
 
     /// Typische Whisper-Halluzinationen bei Stille (aus Untertitel-Trainingsdaten).
+    /// Ein Muster zählt nur, wenn es einen großen Teil des Textes ausmacht. Sonst flöge ein ganzes Diktat weg,
+    /// nur weil darin einmal „Untertitel“ oder „字幕“ vorkommt.
     static func istHalluzination(_ text: String) -> Bool {
         let t = text.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
         if t.isEmpty { return true }
         let muster = ["untertitel", "copyright", "vielen dank fürs zuschauen", "vielen dank für ihre aufmerksamkeit",
-                      "bis zum nächsten mal", "swr 20", "wdr 20", "zdf 20", "amara.org",
-                      "ご視聴ありがとうございました", "ご視聴いただきありがとうございます", "チャンネル登録", "字幕",
+                      "bis zum nächsten mal", "swr 20", "wdr 20", "zdf", "im auftrag des", "amara.org",
+                      "ご視聴ありがとうございました", "ご視聴いただきありがとうございます", "チャンネル登録", "字幕", "字幕by",
                       "谢谢观看", "感谢观看", "请不吝点赞", "点赞订阅", "明镜与点点"]
-        if muster.contains(where: { t.contains($0) }) { return true }
+        // Halluzinationen sind kurz. Ab 60 Buchstaben ist es ein echtes Diktat, auch wenn Muster darin vorkommen.
+        if t.filter({ $0.isLetter || $0.isNumber }).count <= 60, musterAnteil(t, muster) >= 0.35 { return true }
         return ["vielen dank", "danke", "tschüss", "musik", "applaus",
                 "ありがとうございました", "お疲れ様でした", "おやすみなさい", "音楽", "拍手",
                 "谢谢", "谢谢大家", "音乐", "掌声"].contains(t)
+    }
+
+    /// Welcher Anteil der Buchstaben, Ziffern und Schriftzeichen von den Mustern abgedeckt ist (0 bis 1).
+    /// Leerzeichen und Satzzeichen zählen nicht mit, überlappende Treffer nur einmal.
+    static func musterAnteil(_ t: String, _ muster: [String]) -> Double {
+        let z = Array(t)
+        var gedeckt = [Bool](repeating: false, count: z.count)
+        for m in muster {
+            let mz = Array(m)
+            guard !mz.isEmpty, mz.count <= z.count else { continue }
+            for i in 0...(z.count - mz.count) where Array(z[i..<(i + mz.count)]) == mz {
+                for j in i..<(i + mz.count) { gedeckt[j] = true }
+            }
+        }
+        let zaehlt = z.map { $0.isLetter || $0.isNumber }
+        let gesamt = zaehlt.filter { $0 }.count
+        guard gesamt > 0 else { return 0 }
+        let treffer = zip(zaehlt, gedeckt).filter { $0 && $1 }.count
+        return Double(treffer) / Double(gesamt)
     }
 
     /// Chinesische und japanische Schriftzeichen: Hiragana, Katakana, Hanzi/Kanji, Halbbreiten-Katakana.
@@ -195,7 +217,7 @@ enum Textarbeit {
     /// die erste Anfrage 8 s statt 1 s. Gleicher Anfang wie beim echten Aufräumen, nur ein Token Antwort.
     static func aufwecken(woerter: [String], sprache: String) async {
         let koerper: [String: Any] = [
-            "model": Dienste.llmModell, "temperature": 0, "max_tokens": 1,
+            "model": "default_model", "temperature": 0, "max_tokens": 1,
             "chat_template_kwargs": ["enable_thinking": false],
             "messages": nachrichten("test", woerter: woerter, sprache: sprache),
         ]
@@ -230,7 +252,7 @@ enum Textarbeit {
     static func aufraeumen(_ roh: String, woerter: [String], timeout: TimeInterval? = nil) async -> String? {
         // Die Sprache richtet sich nach dem Text, nicht nach der Einstellung. So klappt es auch bei „Automatisch“.
         let koerper: [String: Any] = [
-            "model": Dienste.llmModell,
+            "model": "default_model",
             "temperature": 0,
             "max_tokens": max(64, anzahlWoerter(roh) * 4),
             "chat_template_kwargs": ["enable_thinking": false],

@@ -1,5 +1,30 @@
 # Änderungen
 
+## 1.2.1 — 2026-10-30
+
+- **Protokoll bei „Nichts gehört“:** Koe schreibt jetzt auf, wie lange die Taste
+  gehalten wurde, wie viel davon aufgenommen wurde, wie laut es war und welches
+  Mikrofon aktiv war. Auch „Nichts verstanden“ steht im Protokoll, ohne den Text.
+- **Diktate gehen nicht mehr verloren, nur weil ein Wort wie „Untertitel“, „字幕“
+  oder „チャンネル登録“ darin vorkommt.** Der Filter gegen erfundene Sätze greift
+  nur noch bei kurzen Texten, die zum großen Teil aus solchen Mustern bestehen.
+
+## 1.2.0 — 2026-10-29
+
+Koe läuft jetzt auch auf Macs mit 8 GB Arbeitsspeicher.
+
+- **Zwei Stufen zur Wahl:** Leicht (8 GB: verkleinertes Whisper, Gemma 4 E2B,
+  rund 6 GB Download) und Standard (ab 16 GB: wie bisher, rund 10 GB). Bei der
+  Einrichtung ist die Stufe vorausgewählt, die zum Arbeitsspeicher passt.
+- **Stufe wechseln** in den Einstellungen unter Modelle. Koe lädt die neue
+  Stufe, arbeitet so lange mit der alten weiter und stellt dann selbst um. Die
+  Modelle der anderen Stufe lassen sich danach löschen.
+- **Feste Fassungen:** Whisper, der Stille-Erkenner und Gemma laden in genau
+  der Fassung, mit der Koe getestet ist, statt in der jeweils neuesten. Eine
+  Änderung beim Anbieter kann eine Installation nicht mehr kaputt machen.
+- README: Das Stimmen-Modell (WeSpeaker) steht unter CC BY 4.0, nicht Apache-2.0.
+- Wer schon eingerichtet hat, bleibt auf Standard und lädt nichts neu.
+
 ## 1.1.0 — 2026-10-29
 
 Koe installiert sich jetzt wie eine normale Mac-App.
